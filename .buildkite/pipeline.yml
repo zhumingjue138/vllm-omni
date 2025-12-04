@@ -1,6 +1,20 @@
 steps:
+  - label: ":docker: Build image"
+    commands:
+      - "docker build --file docker/Dockerfile.ci -t vllm-omni-ci ."
+      - "docker tag vllm-omni-ci public.ecr.aws/q9t5s3a7/vllm-omni-ci:latest"
+      - "docker push public.ecr.aws/q9t5s3a7/vllm-ci-test-repo:omni-latest"
+    agents:
+      queue: "cpu_queue_premerge_us_east_1"
+
   - label: "Simple Unit Test"
     commands:
       - ".buildkite/scripts/simple_test.sh"
     agents:
       queue: "cpu_queue_premerge"
+    plugins:
+      - docker#v5.2.0:
+          image: public.ecr.aws/q9t5s3a7/vllm-ci-test-repo:omni-latest
+          always-pull: true
+          propagate-environment: true
+
