@@ -34,7 +34,7 @@ steps:
     agents:
       queue: mithril-h100-pool
     commands:
-      - pytest -s -v tests/single_stage/test_diffusion_model.py
+      - pytest -s -v tests/single_stage/test_diffusion_model.py # update this to your actual test file
     plugins:
       - kubernetes:
           podSpec:
