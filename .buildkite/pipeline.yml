@@ -40,13 +40,13 @@ steps:
           limit: 1
         - exit_status: -10
           limit: 1
+    commands:
+      - pytest -s -v tests/single_stage/test_diffusion_model.py
     plugins:
       - kubernetes:
           podSpec:
             containers:
               - image: public.ecr.aws/q9t5s3a7/vllm-ci-test-repo:$BUILDKITE_COMMIT
-                commands:
-                  - pytest -s -v tests/single_stage/test_diffusion_model.py
                 resources:
                   limits:
                     nvidia.com/gpu: 1
