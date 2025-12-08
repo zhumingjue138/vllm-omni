@@ -1,5 +1,6 @@
 group: Tests
-depends_on: image-build
+depends_on: 
+  - image-build
 steps:
 - label: "Simple Unit Test"
   commands:
