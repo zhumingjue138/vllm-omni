@@ -1,6 +1,6 @@
 group: Build
 steps:
-  - label: ":docker: Build image"
+  - label: ":docker: build vllm-omni-ci image"
     key: image-build
     depends_on: []
     commands:
