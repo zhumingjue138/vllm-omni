@@ -2,12 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections.abc import Iterable
-from enum import Enum
-from typing import Any
+from typing import Any, Enum
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from diffusers.models.attention import FeedForward
 from diffusers.models.embeddings import GlmImageCombinedTimestepSizeEmbeddings
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -161,19 +159,157 @@ class GlmImageAdaLayerNormContinuous(nn.Module):
         return x
 
 
-class GlmImageAttenProcessorState(Enum):
-    """State machine for attention processor to support image editing.
+class KVCacheMode(Enum):
+    """Mode for KV cache operations.
 
-    - ImageGen: Normal text-to-image generation, no KV caching.
-    - ImageEditWriteKV: Write condition image's KV to cache.
-    - ImageEditReadKV: Read cached KV and concatenate with current KV.
-    - ImageEditDontReadKV: Don't read cached KV (for some special cases).
+    - WRITE: Store the K/V tensors from condition images
+    - READ: Concatenate cached K/V with current K/V
+    - SKIP: Do not use cache (pass-through)
     """
 
-    ImageGen = "ImageGen"
-    ImageEditWriteKV = "ImageEditWriteKV"
-    ImageEditReadKV = "ImageEditReadKV"
-    ImageEditDontReadKV = "ImageEditDontReadKV"
+    WRITE = "write"
+    READ = "read"
+    SKIP = "skip"
+
+
+class GlmImageLayerKVCache:
+    """KV cache for a single attention layer.
+
+    Stores key and value tensors for image editing. The cache accumulates
+    KV pairs during write mode and provides them during read mode.
+
+    Shape convention (vllm-omni):
+        key/value: [batch_size, seq_length, num_heads, head_dim]
+    """
+
+    def __init__(self):
+        self.k_cache: torch.Tensor | None = None
+        self.v_cache: torch.Tensor | None = None
+
+    def store(self, key: torch.Tensor, value: torch.Tensor) -> None:
+        """Store or accumulate KV tensors.
+
+        If cache is empty, stores the tensors directly.
+        If cache is not empty, concatenates new tensors along seq_length dim.
+
+        Args:
+            key: Key tensor of shape [B, S, H, D]
+            value: Value tensor of shape [B, S, H, D]
+        """
+        if self.k_cache is None:
+            self.k_cache = key
+            self.v_cache = value
+        else:
+            # Concatenate along sequence dimension (dim=1 for [B, S, H, D])
+            self.k_cache = torch.cat([self.k_cache, key], dim=1)
+            self.v_cache = torch.cat([self.v_cache, value], dim=1)
+
+    def get(self) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Get cached KV tensors.
+
+        Returns:
+            Tuple of (k_cache, v_cache), both may be None if cache is empty.
+        """
+        return self.k_cache, self.v_cache
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        self.k_cache = None
+        self.v_cache = None
+
+    @property
+    def is_empty(self) -> bool:
+        """Check if cache is empty."""
+        return self.k_cache is None
+
+    def __repr__(self) -> str:
+        if self.is_empty:
+            return "GlmImageLayerKVCache(empty)"
+        return f"GlmImageLayerKVCache(k_shape={self.k_cache.shape}, v_shape={self.v_cache.shape})"
+
+
+class GlmImageKVCache:
+    """Container for all layers' KV caches.
+
+    Manages KV cache for all transformer layers in GLM-Image model.
+    Provides a unified interface for setting mode and clearing cache.
+
+    Args:
+        num_layers: Number of transformer layers in the model.
+
+    Example:
+        kv_cache = GlmImageKVCache(num_layers=28)
+        kv_cache.set_mode(KVCacheMode.WRITE)
+        # ... process condition image ...
+        kv_cache.set_mode(KVCacheMode.READ)
+        # ... process target image ...
+        kv_cache.clear()
+    """
+
+    def __init__(self, num_layers: int):
+        self.num_layers = num_layers
+        self.caches = [GlmImageLayerKVCache() for _ in range(num_layers)]
+        self._mode: KVCacheMode | None = None
+
+    def __getitem__(self, layer_idx: int) -> GlmImageLayerKVCache:
+        """Get cache for a specific layer.
+
+        Args:
+            layer_idx: Index of the layer (0-indexed).
+
+        Returns:
+            GlmImageLayerKVCache for the specified layer.
+
+        Raises:
+            IndexError: If layer_idx is out of range.
+        """
+        if layer_idx < 0 or layer_idx >= self.num_layers:
+            raise IndexError(f"Layer index {layer_idx} out of range [0, {self.num_layers})")
+        return self.caches[layer_idx]
+
+    def __len__(self) -> int:
+        """Return number of layers."""
+        return self.num_layers
+
+    @property
+    def mode(self) -> KVCacheMode | None:
+        """Get current cache mode."""
+        return self._mode
+
+    def set_mode(self, mode: KVCacheMode | str | None) -> None:
+        """Set cache mode for all layers.
+
+        Args:
+            mode: Cache mode (WRITE, READ, SKIP) or string ("write", "read", "skip").
+                  Use None to disable cache operations.
+
+        Raises:
+            ValueError: If mode is an invalid string.
+        """
+        if mode is None:
+            self._mode = None
+        elif isinstance(mode, str):
+            try:
+                self._mode = KVCacheMode(mode.lower())
+            except ValueError:
+                raise ValueError(f"Invalid mode: '{mode}', must be one of 'write', 'read', 'skip'")
+        else:
+            self._mode = mode
+
+    def clear(self) -> None:
+        """Clear cache for all layers and reset mode."""
+        for cache in self.caches:
+            cache.clear()
+        self._mode = None
+
+    @property
+    def is_empty(self) -> bool:
+        """Check if all layer caches are empty."""
+        return all(cache.is_empty for cache in self.caches)
+
+    def __repr__(self) -> str:
+        mode_str = self._mode.value if self._mode else "None"
+        return f"GlmImageKVCache(num_layers={self.num_layers}, mode={mode_str}, is_empty={self.is_empty})"
 
 
 class GlmImageAttention(nn.Module):
@@ -181,7 +317,7 @@ class GlmImageAttention(nn.Module):
     Joint attention for GLM-Image model using vllm-omni's optimized attention.
 
     This combines text and image streams for joint attention computation.
-    Supports KV caching for image editing workflows.
+    Supports KV caching for image editing workflows via external cache.
     """
 
     def __init__(
@@ -226,23 +362,29 @@ class GlmImageAttention(nn.Module):
             causal=False,
         )
 
-        # KV cache for image editing
-        self.processor_state = GlmImageAttenProcessorState.ImageGen
-        self.k_cache: torch.Tensor | None = None
-        self.v_cache: torch.Tensor | None = None
-
-    def clear_cache(self):
-        """Clear the KV cache."""
-        self.k_cache = None
-        self.v_cache = None
-
     def forward(
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         image_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
+        kv_cache: GlmImageLayerKVCache | None = None,
+        kv_cache_mode: KVCacheMode | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass for joint attention.
+
+        Args:
+            hidden_states: Image hidden states [B, img_seq_len, D]
+            encoder_hidden_states: Text hidden states [B, text_seq_len, D]
+            image_rotary_emb: Tuple of (cos, sin) for RoPE
+            attention_mask: Optional attention mask for text tokens
+            kv_cache: Optional layer KV cache for image editing
+            kv_cache_mode: Cache mode (WRITE, READ, SKIP)
+
+        Returns:
+            Tuple of (image_hidden_states, text_hidden_states)
+        """
         dtype = encoder_hidden_states.dtype
         batch_size, text_seq_length, _ = encoder_hidden_states.shape
 
@@ -276,19 +418,15 @@ class GlmImageAttention(nn.Module):
             key = torch.cat([key[:, :text_seq_length, :, :], key_img], dim=1)
 
         # Handle KV cache for image editing
-        if self.processor_state == GlmImageAttenProcessorState.ImageEditWriteKV:
-            # Write to cache: accumulate KV from condition images
-            if self.k_cache is None:
-                self.k_cache = key
-                self.v_cache = value
-            else:
-                self.k_cache = torch.cat([self.k_cache, key], dim=1)
-                self.v_cache = torch.cat([self.v_cache, value], dim=1)
-        elif self.processor_state == GlmImageAttenProcessorState.ImageEditReadKV:
-            # Read from cache: concatenate cached KV with current KV
-            if self.k_cache is not None:
-                key = torch.cat([self.k_cache, key], dim=1)
-                value = torch.cat([self.v_cache, value], dim=1)
+        if kv_cache is not None and kv_cache_mode is not None:
+            if kv_cache_mode == KVCacheMode.WRITE:
+                kv_cache.store(key, value)
+            elif kv_cache_mode == KVCacheMode.READ:
+                k_cached, v_cached = kv_cache.get()
+                if k_cached is not None:
+                    key = torch.cat([k_cached, key], dim=1)
+                    value = torch.cat([v_cached, value], dim=1)
+            # KVCacheMode.SKIP: do nothing
 
         # Attention computation
         hidden_states_out = self.attn(query, key, value)
@@ -338,7 +476,25 @@ class GlmImageTransformerBlock(nn.Module):
         image_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
         attention_kwargs: dict[str, Any] | None = None,
+        kv_cache: GlmImageLayerKVCache | None = None,
+        kv_cache_mode: KVCacheMode | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass for transformer block.
+
+        Args:
+            hidden_states: Image hidden states
+            encoder_hidden_states: Text hidden states
+            temb: Timestep embedding
+            image_rotary_emb: RoPE embeddings
+            attention_mask: Text attention mask
+            attention_kwargs: Additional attention arguments
+            kv_cache: Layer-specific KV cache for image editing
+            kv_cache_mode: Cache mode (WRITE, READ, SKIP)
+
+        Returns:
+            Tuple of (image_hidden_states, text_hidden_states)
+        """
         # 1. Timestep conditioning via AdaLN
         (
             norm_hidden_states,
@@ -359,6 +515,8 @@ class GlmImageTransformerBlock(nn.Module):
             encoder_hidden_states=norm_encoder_hidden_states,
             image_rotary_emb=image_rotary_emb,
             attention_mask=attention_mask,
+            kv_cache=kv_cache,
+            kv_cache_mode=kv_cache_mode,
         )
         hidden_states = hidden_states + attn_hidden_states * gate_msa.unsqueeze(1)
         encoder_hidden_states = encoder_hidden_states + attn_encoder_hidden_states * c_gate_msa.unsqueeze(1)
@@ -468,6 +626,7 @@ class GlmImageTransformer2DModel(CachedTransformer):
         return_dict: bool = True,
         attention_mask: torch.Tensor | None = None,
         image_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
+        kv_cache: GlmImageKVCache | None = None,
     ) -> torch.Tensor | Transformer2DModelOutput:
         """
         Forward pass of the GLM-Image Transformer.
@@ -484,11 +643,19 @@ class GlmImageTransformer2DModel(CachedTransformer):
             return_dict: Whether to return a dataclass.
             attention_mask: Optional attention mask for text tokens.
             image_rotary_emb: Pre-computed rotary embeddings.
+            kv_cache: Optional KV cache for image editing. When provided,
+                      the cache's mode determines behavior:
+                      - WRITE: Store KV from condition images
+                      - READ: Use cached KV during generation
+                      - SKIP: No caching (same as None)
 
         Returns:
             Output tensor or Transformer2DModelOutput.
         """
         batch_size, num_channels, height, width = hidden_states.shape
+
+        # Get KV cache mode
+        kv_cache_mode = kv_cache.mode if kv_cache is not None else None
 
         # 1. RoPE
         if image_rotary_emb is None:
@@ -515,10 +682,12 @@ class GlmImageTransformer2DModel(CachedTransformer):
 
         # Timestep conditioning
         temb = self.time_condition_embed(timestep, target_size, crop_coords, hidden_states.dtype)
-        temb = F.silu(temb)
 
         # 3. Transformer blocks
-        for block in self.transformer_blocks:
+        for layer_idx, block in enumerate(self.transformer_blocks):
+            # Get layer-specific KV cache if available
+            layer_kv_cache = kv_cache[layer_idx] if kv_cache is not None else None
+
             hidden_states, encoder_hidden_states = block(
                 hidden_states,
                 encoder_hidden_states,
@@ -526,6 +695,8 @@ class GlmImageTransformer2DModel(CachedTransformer):
                 image_rotary_emb,
                 attention_mask,
                 attention_kwargs,
+                kv_cache=layer_kv_cache,
+                kv_cache_mode=kv_cache_mode,
             )
 
         # 4. Output norm & projection
@@ -593,29 +764,28 @@ class GlmImageTransformer2DModel(CachedTransformer):
 
         return loaded_params
 
-    # Image Editing Support: KV Cache State Management
-    def set_attention_processors_state(self, state: GlmImageAttenProcessorState):
+    def create_kv_cache(self) -> GlmImageKVCache:
         """
-        Set the attention processor state for all transformer blocks.
+        Create a KV cache for image editing.
 
-        This controls how KV cache is handled during image editing:
-        - ImageGen: Normal generation, no caching
-        - ImageEditWriteKV: Cache KV from condition images
-        - ImageEditReadKV: Use cached KV during generation
-        - ImageEditDontReadKV: Skip reading cache
+        Returns a new GlmImageKVCache instance sized for this model's
+        number of transformer layers. Use this for image editing workflows.
 
-        Args:
-            state: The attention processor state to set.
+        Example:
+            kv_cache = transformer.create_kv_cache()
+            kv_cache.set_mode("write")
+            transformer(condition_image, kv_cache=kv_cache)
+            kv_cache.set_mode("read")
+            for t in timesteps:
+                transformer(noisy_target, kv_cache=kv_cache)
+            kv_cache.clear()
+
+        Returns:
+            GlmImageKVCache instance with correct number of layers.
         """
-        for block in self.transformer_blocks:
-            block.attn.processor_state = state
+        return GlmImageKVCache(num_layers=len(self.transformer_blocks))
 
-    def clear_attention_processors_cache(self):
-        """
-        Clear the KV cache in all attention layers.
-
-        Should be called before processing a new image editing request
-        to ensure no stale cache from previous requests.
-        """
-        for block in self.transformer_blocks:
-            block.attn.clear_cache()
+    @property
+    def num_layers(self) -> int:
+        """Return number of transformer layers."""
+        return len(self.transformer_blocks)
