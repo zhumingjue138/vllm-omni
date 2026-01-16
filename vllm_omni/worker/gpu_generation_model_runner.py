@@ -274,7 +274,7 @@ class GPUGenerationModelRunner(OmniGPUModelRunner):
         if self.execute_model_state is None:
             # Nothing to do (PP non-final rank case), output isn't used.
             if not kv_connector_output:
-                return EMPTY_MODEL_RUNNER_OUTPUT
+                return None  # type: ignore[return-value]
 
             # In case of PP with kv transfer, we need to pass through the
             # kv_connector_output
