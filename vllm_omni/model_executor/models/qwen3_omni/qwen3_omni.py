@@ -356,18 +356,14 @@ class Qwen3OmniMoeForConditionalGeneration(
         elif self.model_stage == "code2wav":
             # Extract codec codes from input
             codes = []
-            if input_ids is not None:
+            if input_ids.shape[0] % 16 == 0:
                 codes.append(input_ids.reshape(1, 16, -1))
-
             else:
-                # for profile, we use max length from inputs_embeds
-                codes.append(
-                    torch.zeros(
-                        (1, 16, inputs_embeds.shape[1]),
-                        dtype=torch.long,
-                        device=inputs_embeds.device,
-                    )
-                )
+                logger.warning(f"Input_ids length: {input_ids.shape[0]} is not divisible by 16, padding with zeros. This should only happen in warm up.")
+                input_ids_flatten = input_ids.reshape(-1)
+                input_ids_flatten = torch.cat([input_ids_flatten, torch.zeros(16 - input_ids.shape[0] % 16, dtype=torch.long, device=input_ids.device)])
+                codes.append(input_ids_flatten.reshape(1, 16, -1))
+
 
             # Generate audio from codec codes
             audio_tensors = []
