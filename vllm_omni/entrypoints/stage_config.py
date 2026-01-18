@@ -48,13 +48,13 @@ class StageConfig:
     final_output: bool
     final_output_type: str
     
-    def to_omegaconf(self) -> DictConfig:
-        """Converts the dataclass to an OmegaConf DictConfig.
+    def to_dict(self) -> dict[str, Any]:
+        """Converts the dataclass to a plain dictionary.
         
         Returns:
-            OmegaConf DictConfig compatible with OmniStage initialization
+            Dictionary with stage configuration
         """
-        return OmegaConf.create({
+        return {
             "stage_id": self.stage_id,
             "stage_type": self.stage_type,
             "runtime": {
@@ -62,10 +62,20 @@ class StageConfig:
                 "devices": self.runtime.devices,
                 "max_batch_size": self.runtime.max_batch_size,
             },
-            "engine_args": OmegaConf.create(self.engine_args),
+            "engine_args": self.engine_args,  # Pass through as-is
             "final_output": self.final_output,
             "final_output_type": self.final_output_type,
-        })
+        }
+    
+    def to_omegaconf(self) -> DictConfig:
+        """Converts the dataclass to an OmegaConf DictConfig.
+        
+        Returns:
+            OmegaConf DictConfig compatible with OmniStage initialization
+        """
+        # Convert to dict first, then wrap in OmegaConf
+        # This allows engine_args to remain as whatever type it already is
+        return OmegaConf.create(self.to_dict())
 
 
 class StageConfigFactory:
@@ -188,12 +198,14 @@ class StageConfigFactory:
         )
         
         # Build engine arguments with cache config
-        engine_args = {
+        # Wrap in OmegaConf.create to match original behavior
+        engine_args = OmegaConf.create({
             **kwargs,
             "cache_backend": cache_backend,
             "cache_config": cache_config,
-            "model_stage": "diffusion",
-        }
+        })
+        # Set model_stage after OmegaConf creation to match original behavior
+        engine_args["model_stage"] = "diffusion"
         
         # Create structured stage configuration
         stage_config = StageConfig(
@@ -209,7 +221,7 @@ class StageConfigFactory:
         return [stage_config.to_omegaconf()]
     
     @classmethod
-    def create_default_diffusion_async(cls, kwargs: dict[str, Any]) -> list[DictConfig]:
+    def create_default_diffusion_async(cls, kwargs: dict[str, Any]) -> list[dict]:
         """Create default diffusion stage configuration for async mode.
         
         This is similar to create_default_diffusion but handles async-specific
@@ -220,7 +232,7 @@ class StageConfigFactory:
             kwargs: Dictionary of configuration parameters
             
         Returns:
-            List containing a single OmegaConf DictConfig for the diffusion stage
+            List containing a single dict for the diffusion stage (not wrapped in OmegaConf)
         """
         from vllm_omni.diffusion.data import DiffusionParallelConfig
         
@@ -263,6 +275,8 @@ class StageConfigFactory:
         )
         
         # Build engine arguments specific to async mode
+        # Note: We don't wrap in OmegaConf.create here because parallel_config
+        # may not be serializable. The original code used a plain dict.
         engine_args = {
             "parallel_config": parallel_config,
             "vae_use_slicing": kwargs.get("vae_use_slicing", False),
@@ -284,5 +298,5 @@ class StageConfigFactory:
             final_output_type="image",
         )
         
-        # Convert to OmegaConf for compatibility with existing code
-        return [stage_config.to_omegaconf()]
+        # Return as plain dict for async mode (engine_args contains non-serializable parallel_config)
+        return [stage_config.to_dict()]
