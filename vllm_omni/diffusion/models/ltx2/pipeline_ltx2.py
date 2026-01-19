@@ -190,7 +190,4 @@ class LTX2Pipeline(nn.Module):
             frames = output
         
         # Return as DiffusionOutput
-        return DiffusionOutput(
-            images=frames,
-            final_output_type="image",
-        )
+        return DiffusionOutput(output=frames)
