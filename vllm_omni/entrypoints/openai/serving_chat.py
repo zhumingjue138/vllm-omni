@@ -1298,7 +1298,9 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
         kv_transfer_params = None
 
         # Build requested modalities set for filtering
-        requested_modalities = set(request.modalities) if hasattr(request, "modalities") and request.modalities else None
+        requested_modalities = (
+            set(request.modalities) if hasattr(request, "modalities") and request.modalities else None
+        )
 
         for omni_outputs in final_outputs:
             choices_data = []
