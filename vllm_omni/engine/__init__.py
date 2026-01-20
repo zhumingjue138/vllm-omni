@@ -2,18 +2,14 @@
 Engine components for vLLM-Omni.
 """
 
-import time
-from collections.abc import Mapping
 from typing import Any
 
 import msgspec
 import torch
 from vllm.v1.engine import (
-    EngineCoreRequest,
     EngineCoreOutput,
     EngineCoreOutputs,
-    SchedulerStats,
-    UtilityOutput,
+    EngineCoreRequest,
 )
 
 
@@ -79,7 +75,6 @@ class OmniEngineCoreRequest(EngineCoreRequest):
 
 class OmniEngineCoreOutput(EngineCoreOutput):
     pooling_output: dict[str, torch.Tensor] | None = None
-
 
 
 class OmniEngineCoreOutputs(EngineCoreOutputs):

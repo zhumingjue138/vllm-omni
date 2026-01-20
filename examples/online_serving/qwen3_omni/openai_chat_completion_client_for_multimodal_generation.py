@@ -304,14 +304,14 @@ def get_multi_audios_query(custom_prompt: str | None = None):
         ],
     }
 
+
 def get_use_audio_in_video_query(
     video_path: str | None = None,
     audio_path: str | None = None,
     custom_prompt: str | None = None,
 ):
     question = custom_prompt or (
-        "Describe the content of the video in details, then convert what the "
-        "baby say into text."
+        "Describe the content of the video in details, then convert what the baby say into text."
     )
     video_url = get_video_url_from_path(video_path)
     audio_url = get_audio_url_from_path(audio_path)
@@ -323,6 +323,7 @@ def get_use_audio_in_video_query(
             {"type": "text", "text": question},
         ],
     }
+
 
 query_map = {
     "text": get_text_query,
