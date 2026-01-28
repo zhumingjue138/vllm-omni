@@ -6,8 +6,23 @@ except ImportError:
     # Python < 3.11: use typing_extensions
     from typing_extensions import NotRequired
 
+from typing import TypeAlias
+
 import torch
-from vllm.inputs.data import EmbedsPrompt, TokenInputs, TokensPrompt
+from vllm.inputs.data import (
+    EmbedsInputs,
+    EmbedsPrompt,
+    TextPrompt,
+    TokenInputs,
+    TokensPrompt,
+)
+
+
+class OmniTextPrompt(TextPrompt):
+    """Text prompt with optional embeddings and additional information."""
+
+    prompt_embeds: NotRequired[torch.Tensor]
+    additional_information: NotRequired[dict[str, Any]]
 
 
 class OmniTokensPrompt(TokensPrompt):
@@ -52,23 +67,18 @@ class OmniTokenInputs(TokenInputs):
 
 
 class OmniEmbedsPrompt(EmbedsPrompt):
-    """Embeddings prompt with optional additional information.
+    """Embeddings prompt with optional additional information."""
 
-    Extends EmbedsPrompt to support additional information payloads
-    for direct transfer between pipeline stages.
-
-    Attributes:
-        prompt_embeds: Optional tensor containing prompt embeddings
-        additional_information: Optional dictionary containing additional
-            information (tensors or lists) to pass along with the prompt
-    """
-
-    # New: optional prompt embeddings aligned with token ids
-    prompt_embeds: NotRequired[torch.Tensor]
-
-    # New: optional additional information dictionary
-    # Values may be torch.Tensor or list
     additional_information: NotRequired[dict[str, Any]]
+
+
+class OmniEmbedsInputs(EmbedsInputs):
+    """Embeddings inputs with optional additional information."""
+
+    additional_information: NotRequired[dict[str, Any]]
+
+
+OmniSingletonPrompt: TypeAlias = str | OmniTextPrompt | OmniTokensPrompt | OmniEmbedsPrompt
 
 
 def token_inputs_omni(
@@ -105,4 +115,18 @@ def token_inputs_omni(
     if additional_information is not None:
         inputs["additional_information"] = additional_information
 
+    return inputs
+
+
+def embeds_inputs_omni(
+    prompt_embeds: torch.Tensor,
+    cache_salt: str | None = None,
+    additional_information: dict[str, Any] | None = None,
+) -> OmniEmbedsInputs:
+    """Construct embeddings inputs with optional metadata."""
+    inputs: OmniEmbedsInputs = OmniEmbedsInputs(type="embeds", prompt_embeds=prompt_embeds)
+    if cache_salt is not None:
+        inputs["cache_salt"] = cache_salt
+    if additional_information is not None:
+        inputs["additional_information"] = additional_information
     return inputs

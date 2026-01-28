@@ -1,4 +1,3 @@
-from vllm.inputs.data import SingletonPrompt
 from vllm.inputs.parse import (
     ParsedEmbedsPrompt,
     ParsedSingletonPrompt,
@@ -7,8 +6,12 @@ from vllm.inputs.parse import (
     ParsedTokensPrompt,
 )
 
+from vllm_omni.inputs.data import OmniSingletonPrompt
 
-def parse_singleton_prompt_omni(prompt: SingletonPrompt) -> ParsedSingletonPrompt:
+
+def parse_singleton_prompt_omni(
+    prompt: OmniSingletonPrompt,
+) -> ParsedSingletonPrompt:
     """Parse a singleton prompt into a typed parsed prompt.
 
     Handles omni-specific prompt types including tokens prompts with
