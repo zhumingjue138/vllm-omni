@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import State
 from starlette.routing import Route
 from vllm.engine.protocol import EngineClient
-from vllm.entrypoints.anthropic.serving_messages import AnthropicServingMessages
+from vllm.entrypoints.anthropic.serving import AnthropicServingMessages
 from vllm.entrypoints.launcher import serve_http
 from vllm.entrypoints.logger import RequestLogger
 from vllm.entrypoints.mcp.tool_server import DemoToolServer, MCPToolServer, ToolServer
