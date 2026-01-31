@@ -151,8 +151,6 @@ def test_text_to_text_audio_001(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_to_audio_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -195,8 +193,6 @@ def test_text_to_audio_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_audio_to_text_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -237,8 +233,6 @@ def test_audio_to_text_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_audio_to_text_audio_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -312,8 +306,6 @@ def test_audio_to_text_audio_001(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_image_to_text_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -354,8 +346,6 @@ def test_image_to_text_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_image_to_text_audio_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -429,8 +419,6 @@ def test_image_to_text_audio_001(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_audio_to_text_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -460,8 +448,6 @@ def test_text_audio_to_text_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_audio_to_text_audio_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -544,8 +530,6 @@ def test_text_audio_to_text_audio_001(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_image_to_text_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -589,8 +573,7 @@ def test_text_image_to_text_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_image_to_text_audio_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -668,8 +651,7 @@ def test_text_image_to_text_audio_001(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_video_to_text_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -710,8 +692,7 @@ def test_text_video_to_text_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_video_to_text_audio_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -789,8 +770,7 @@ def test_text_video_to_text_audio_001(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_mix_to_text_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -863,8 +843,7 @@ def test_mix_to_text_001(test_config: tuple[str, str]) -> None:
             # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_mix_to_text_audio_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -949,8 +928,7 @@ def test_mix_to_text_audio_001(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_mix_to_text_audio_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1006,8 +984,7 @@ def test_mix_to_text_audio_002(test_config: tuple[str, str]) -> None:
             assert result.get("completed") == 100, "The request success rate did not reach 100%."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_mix_to_text_audio_003(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1063,8 +1040,7 @@ def test_mix_to_text_audio_003(test_config: tuple[str, str]) -> None:
             assert result.get("completed") == 100, "The request success rate did not reach 100%."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_mix_to_text_audio_004(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1120,8 +1096,7 @@ def test_mix_to_text_audio_004(test_config: tuple[str, str]) -> None:
             assert result.get("completed") == 1000, "The request success rate did not reach 100%."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_chunked_prefill_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1159,8 +1134,7 @@ def test_chunked_prefill_001(test_config: tuple[str, str]) -> None:
         assert chat_completion.usage.completion_tokens == 10, "The output length differs from the requested max_tokens."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_chunked_prefill_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1238,8 +1212,7 @@ def test_chunked_prefill_002(test_config: tuple[str, str]) -> None:
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_chunked_prefill_003(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1295,8 +1268,7 @@ def test_chunked_prefill_003(test_config: tuple[str, str]) -> None:
             assert result.get("completed") == 100, "The request success rate did not reach 100%."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_use_audio_in_video_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1372,8 +1344,7 @@ def test_use_audio_in_video_001(test_config: tuple[str, str]) -> None:
                 "The audio content is not same as the text"
             )
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_use_audio_in_video_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1451,8 +1422,7 @@ def test_use_audio_in_video_002(test_config: tuple[str, str]) -> None:
                 "The audio content is not same as the text"
             )
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_use_audio_in_video_003(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1537,8 +1507,7 @@ def test_use_audio_in_video_003(test_config: tuple[str, str]) -> None:
                 "The audio content is not same as the text"
             )
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_to_text_audio_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1580,8 +1549,7 @@ def test_text_to_text_audio_002(test_config: tuple[str, str]) -> None:
             result = run_benchmark(args)
             assert result.get("completed") == 100, "The request success rate did not reach 100%."
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_to_text_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1756,8 +1724,7 @@ def test_text_to_text_async_chunk_001(test_config: tuple[str, str]) -> None:
         assert "beijing" in text_choice.message.content.lower(), "The output do not contain keywords."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_to_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -1881,8 +1848,7 @@ def test_text_to_text_audio_async_chunk_001(test_config: tuple[str, str]) -> Non
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_audio_to_text_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -1931,8 +1897,7 @@ def test_audio_to_text_async_chunk_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_audio_to_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2005,8 +1970,7 @@ def test_audio_to_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
             assert audio_message.audio.expires_at > time.time(), "The generated audio has expired."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_audio_to_text_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2091,8 +2055,7 @@ def test_audio_to_text_audio_async_chunk_001(test_config: tuple[str, str]) -> No
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_image_to_text_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -2140,8 +2103,7 @@ def test_image_to_text_async_chunk_001(test_config: tuple[str, str]) -> None:
         print(f"the request e2e is: {time.perf_counter() - start_time}")
         # TODO: Verify the E2E latency after confirmation baseline.
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_image_to_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2186,8 +2148,7 @@ def test_image_to_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_image_to_text_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2272,8 +2233,6 @@ def test_image_to_text_audio_async_chunk_001(test_config: tuple[str, str]) -> No
             )
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_video_to_text_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -2321,8 +2280,6 @@ def test_video_to_text_async_chunk_001(test_config: tuple[str, str]) -> None:
         print(f"the request e2e is: {time.perf_counter() - start_time}")
         # TODO: Verify the E2E latency after confirmation baseline.
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_video_to_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2367,8 +2324,6 @@ def test_video_to_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
         # TODO: Verify the E2E latency after confirmation baseline.
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_video_to_text_audio_async_chunk_001(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2452,8 +2407,6 @@ def test_video_to_text_audio_async_chunk_001(test_config: tuple[str, str]) -> No
                 "The audio content is not same as the text"
             )
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_image_to_text_async_chunk_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -2510,8 +2463,6 @@ def test_text_image_to_text_async_chunk_002(test_config: tuple[str, str]) -> Non
         # Verify text output success
         assert text_content is not None and len(text_content) >= 2, "No text output is generated"
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_video_to_audio_async_chunk_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -2566,8 +2517,6 @@ def test_text_video_to_audio_async_chunk_002(test_config: tuple[str, str]) -> No
         # Verify audio output success
         assert audio_data is not None, "No audio output is generated"
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_audio_to_text_async_chunk_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating text output via OpenAI API."""
@@ -2619,8 +2568,6 @@ def test_text_audio_to_text_async_chunk_002(test_config: tuple[str, str]) -> Non
         # Verify text output success
         assert text_content is not None and len(text_content) >= 2, "No text output is generated"
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_mix_to_audio_async_chunk_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2701,8 +2648,6 @@ def test_mix_to_audio_async_chunk_002(test_config: tuple[str, str]) -> None:
         for audio_data in chat_completions:
             assert audio_data is not None, "No audio output is generated"
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_mix_to_text_audio_async_chunk_002(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2795,8 +2740,6 @@ def test_mix_to_text_audio_async_chunk_002(test_config: tuple[str, str]) -> None
             assert audio_data is not None, "No audio output is generated"
             assert text_content is not None and len(text_content) >= 2, "No text output is generated"
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_to_text_async_chunk_003(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -2852,8 +2795,6 @@ def test_text_to_text_async_chunk_003(test_config: tuple[str, str]) -> None:
             assert result.get("completed") == 100, "The request success rate did not reach 100%."
 
 
-@pytest.mark.full
-@pytest.mark.H100_2
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_to_text_async_chunk_004(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
