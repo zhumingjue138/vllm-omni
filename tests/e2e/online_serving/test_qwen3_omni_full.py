@@ -2790,6 +2790,8 @@ def test_text_to_text_async_chunk_003(test_config: tuple[str, str]) -> None:
                 "--ignore-eos",
                 "--extra_body",
                 '{"modalities": ["text"]}',
+                "--percentile-metrics",
+                "ttft,tpot,itl,e2el,audio_ttfp,audio_rtf",
             ]
             result = run_benchmark(args)
             assert result.get("completed") == 100, "The request success rate did not reach 100%."
@@ -2847,6 +2849,8 @@ def test_text_to_text_async_chunk_004(test_config: tuple[str, str]) -> None:
                 "--ignore-eos",
                 "--extra_body",
                 '{"modalities": ["text"]}',
+                "--percentile-metrics",
+                "ttft,tpot,itl,e2el,audio_ttfp,audio_rtf",
             ]
             result = run_benchmark(args)
             assert result.get("completed") == 100, "The request success rate did not reach 100%."

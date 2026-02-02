@@ -4,6 +4,7 @@ import io
 import math
 import os
 import random
+import json
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 # Set CPU device for CI environments without GPU
