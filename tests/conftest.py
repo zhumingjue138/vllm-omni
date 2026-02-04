@@ -4,6 +4,7 @@ import io
 import math
 import os
 import random
+import json
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 # Set CPU device for CI environments without GPU
@@ -174,7 +175,7 @@ def run_benchmark(args: list) -> Any:
     with open(os.path.join(result_dir, result_filename), encoding="utf-8") as f:
         result = json.load(f)
     return result
-    
+
 
 def dummy_messages_from_mix_data(
     system_prompt: dict[str, Any] = None,
