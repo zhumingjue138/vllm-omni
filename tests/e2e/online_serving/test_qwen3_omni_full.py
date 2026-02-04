@@ -3082,6 +3082,62 @@ def test_mix_to_text_audio_async_chunk_003(test_config: tuple[str, str]) -> None
             result = run_benchmark(args)
             assert result.get("completed") == 100, "The request success rate did not reach 100%."
 
+
+@pytest.mark.parametrize("test_config", test_params)
+def test_mix_to_text_audio_async_chunk_004(test_config: tuple[str, str]) -> None:
+    """Test processing text, generating audio output via OpenAI API."""
+
+    model, stage_config_path = test_config
+    num_concurrent_requests = 256
+    stage_config_path = modify_stage_config(
+        stage_config_path,
+        updates={
+            "async_chunk": True,
+            "stage_args":{
+                0: {
+                    "runtime.max_batch_size": num_concurrent_requests,
+                    "engine_args.custom_process_next_stage_input_func": "vllm_omni.model_executor.stage_input_processors.qwen3_omni.thinker2talker_async_chunk"
+                },
+                1: {
+                    "runtime.max_batch_size": num_concurrent_requests,
+                    "engine_args.custom_process_next_stage_input_func": "vllm_omni.model_executor.stage_input_processors.qwen3_omni.talker2code2wav_async_chunk"
+                },
+            },
+        },
+        deletes={"stage_args": {2: ["custom_process_input_func"]}},
+    )
+    with OmniServer(model, ["--stage-configs-path", stage_config_path, "--stage-init-timeout", "90"]) as server:
+        request_rates = [0.1, 0.2, 0.3, 0.4]
+        for request_rate in request_rates:
+            args = [
+                "--model",
+                server.model,
+                "--host",
+                server.host,
+                "--port",
+                str(server.port),
+                "--dataset-name",
+                "random-mm",
+                "--request_rate",
+                str(request_rate),
+                "--random-input-len",
+                "2500",
+                "--random-output-len",
+                "900",
+                "--num-prompts",
+                "100",
+                "--endpoint",
+                "/v1/chat/completions",
+                "--backend",
+                "openai-chat-omni",
+                "--ignore-eos",
+                "--percentile-metrics",
+                "ttft,tpot,itl,e2el,audio_ttfp,audio_rtf",
+            ]
+            result = run_benchmark(args)
+            assert result.get("completed") == 100, "The request success rate did not reach 100%."
+
+
 @pytest.mark.parametrize("test_config", test_params)
 def test_text_to_text_no_async_chunk_003(test_config: tuple[str, str]) -> None:
     """Test processing text, generating audio output via OpenAI API."""
@@ -3383,6 +3439,57 @@ def test_mix_to_text_audio_no_async_chunk_003(test_config: tuple[str, str]) -> N
                 "inf",
                 "--max-concurrency",
                 str(max_concurrency),
+                "--random-input-len",
+                "2500",
+                "--random-output-len",
+                "900",
+                "--num-prompts",
+                "100",
+                "--endpoint",
+                "/v1/chat/completions",
+                "--backend",
+                "openai-chat-omni",
+                "--ignore-eos",
+                "--percentile-metrics",
+                "ttft,tpot,itl,e2el,audio_ttfp,audio_rtf",
+            ]
+            result = run_benchmark(args)
+            assert result.get("completed") == 100, "The request success rate did not reach 100%."
+
+
+@pytest.mark.parametrize("test_config", test_params)
+def test_mix_to_text_audio_no_async_chunk_004(test_config: tuple[str, str]) -> None:
+    """Test processing text, generating audio output via OpenAI API."""
+
+    model, stage_config_path = test_config
+    num_concurrent_requests = 256
+    stage_config_path = modify_stage_config(
+        stage_config_path,
+        updates={
+            "stage_args":{
+                0: {
+                    "runtime.max_batch_size": num_concurrent_requests
+                },
+                1: {
+                    "runtime.max_batch_size": num_concurrent_requests
+                },
+            },
+        },
+    )
+    with OmniServer(model, ["--stage-configs-path", stage_config_path, "--stage-init-timeout", "90"]) as server:
+        request_rates = [0.1, 0.2, 0.3, 0.4]
+        for request_rate in request_rates:
+            args = [
+                "--model",
+                server.model,
+                "--host",
+                server.host,
+                "--port",
+                str(server.port),
+                "--dataset-name",
+                "random-mm",
+                "--request_rate",
+                str(request_rate),
                 "--random-input-len",
                 "2500",
                 "--random-output-len",
