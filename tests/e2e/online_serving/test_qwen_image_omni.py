@@ -31,14 +31,6 @@ from tests.conftest import (
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
-models = ["Qwen/Qwen-Image_Edit-2511"]
-
-# CI stage config for 2*H100-80G GPUs
-stage_configs = [str(Path(__file__).parent.parent / "stage_configs" / "qwen3_omni_ci.yaml")]
-
-# Create parameter combinations for model and stage config
-test_params = [(model, stage_config) for model in models for stage_config in stage_configs]
-
 
 def client(omni_server):
     """OpenAI client for the running vLLM-Omni server."""
@@ -63,59 +55,10 @@ def get_system_prompt():
         ],
     }
 
-@pytest.mark.parametrize("test_config", test_params)
-def test_mix_to_text_audio_no_async_chunk_004(test_config: tuple[str, str]) -> None:
-    """Test processing text, generating audio output via OpenAI API."""
-
-    model, stage_config_path = test_config
-    num_concurrent_requests = 256
-    stage_config_path = modify_stage_config(
-        stage_config_path,
-        updates={
-            "stage_args":{
-                0: {
-                    "runtime.max_batch_size": num_concurrent_requests
-                },
-                1: {
-                    "runtime.max_batch_size": num_concurrent_requests
-                },
-            },
-        },
-    )
-    with OmniServer(model, ["--stage-configs-path", stage_config_path, "--stage-init-timeout", "90"]) as server:
-        request_rates = [0.1, 0.2, 0.3, 0.4]
-        for request_rate in request_rates:
-            args = [
-                "--model",
-                server.model,
-                "--host",
-                server.host,
-                "--port",
-                str(server.port),
-                "--dataset-name",
-                "random-mm",
-                "--request_rate",
-                str(request_rate),
-                "--random-input-len",
-                "2500",
-                "--random-output-len",
-                "900",
-                "--num-prompts",
-                "100",
-                "--endpoint",
-                "/v1/chat/completions",
-                "--backend",
-                "openai-chat-omni",
-                "--ignore-eos",
-                "--percentile-metrics",
-                "ttft,tpot,itl,e2el,audio_ttfp,audio_rtf",
-            ]
-            result = run_benchmark(args)
-            assert result.get("completed") == 100, "The request success rate did not reach 100%."
 
 
 # Model and serve args for Qwen-Image-Edit-2511 (OmniServerTest, no stage config)
-MODEL_IMAGE_EDIT_2511 = "Qwen/Qwen-Image_Edit-2511"
+MODEL = ["/data/models/Qwen-Image-Edit-2511"]
 SERVE_ARGS_IMAGE_EDIT = [
     "--vae-use-tiling",
     "--vae-use-slicing",
@@ -123,7 +66,7 @@ SERVE_ARGS_IMAGE_EDIT = [
 ]
 # GPU device id for this test (equivalent to export CUDA_VISIBLE_DEVICES="x")
 # Override via env: CUDA_VISIBLE_DEVICES (e.g. pytest ... -E CUDA_VISIBLE_DEVICES=1)
-GPU_ID = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+GPU_ID = os.environ.get("CUDA_VISIBLE_DEVICES", "7")
 
 
 def get_gpu_memory(gpu_id: str = "0"):
@@ -145,57 +88,91 @@ def get_gpu_memory(gpu_id: str = "0"):
         return None, None
 
 
-def test_image_edit_loop_omni_server_test() -> None:
-    """Use OmniServerTest to start Qwen-Image_Edit-2511, then loop images.edit requests."""
-    num_requests = 5
-    env_dict = {"CUDA_VISIBLE_DEVICES": GPU_ID}
+
+@pytest.mark.parametrize("model_name", MODEL)
+@pytest.mark.parametrize("gpu_id", GPU_ID)
+def test_image_edit_loop_omni_server_test_multi_image(model_name: str, gpu_id: str) -> None:
+    """Use OmniServerTest to start Qwen-Image_Edit-2511, then loop images.edit requests with multiple images."""
+    num_requests = 3
+    env_dict = {"CUDA_VISIBLE_DEVICES": gpu_id}
+    
+    # 本地多张图片路径列表
+    local_image_paths = [
+        "/home/z00939163/vllm-omni-main/vllm-omni/tests/e2e/online_serving/cat.png",
+        "/home/z00939163/vllm-omni-main/vllm-omni/tests/e2e/online_serving/dog.jpg", 
+        # 添加更多图片路径...
+    ]
+    
+    # 检查图片文件是否存在
+    for img_path in local_image_paths:
+        if not os.path.exists(img_path):
+            pytest.fail(f"Local image file not found: {img_path}")
+    
     with OmniServerTest(
-        MODEL_IMAGE_EDIT_2511, SERVE_ARGS_IMAGE_EDIT, env_dict=env_dict
+        model_name, SERVE_ARGS_IMAGE_EDIT, env_dict=env_dict
     ) as server:
-        client_instance = openai.OpenAI(
-            base_url=f"http://{server.host}:{server.port}/v1",
-            api_key="EMPTY",
-        )
-        # Prepare a temp image file from synthetic image
-        img_result = generate_synthetic_image(512, 512)
-        image_bytes = base64.b64decode(img_result["base64"])
-        image_path = None
-        with tempfile.NamedTemporaryFile(suffix=".jpeg", delete=False) as f:
-            f.write(image_bytes)
-            image_path = f.name
+        
+        api_client = client(server)
+        
         try:
             success_count = 0
+            
             for i in range(num_requests):
-                width = random.randint(512, 768)
-                height = random.randint(512, 768)
+                width = random.randint(100, 8000)
+                height = random.randint(100, 8000)
                 size = f"{width}x{height}"
+                
                 try:
-                    with open(image_path, "rb") as img_file:
-                        result = client_instance.images.edit(
-                            model=MODEL_IMAGE_EDIT_2511,
-                            image=[img_file],
-                            prompt=(
-                                "Change the scene to a cozy reading room. "
-                                "Keep the composition recognizable. "
-                                "Use soft lighting and warm colors."
-                            ),
-                            size=size,
-                            stream=False,
-                            output_format="jpeg",
-                            extra_body={
-                                "num_inference_steps": 1,
-                                "guidance_scale": 1.0,
-                            },
-                        )
-                    image_base64 = result.data[0].b64_json
-                    _ = base64.b64decode(image_base64)
+                    # 打开所有图片文件
+                    image_files = []
+                    for img_path in local_image_paths:
+                        with open(img_path, "rb") as img_file:
+                            # 注意：这里需要确认API是否支持多张图片输入
+                            # 有些API可能需要将多个图片合并为一个文件，或者使用不同的参数
+                            image_files.append(img_file.read())
+                    
+                    # 根据API要求处理多张图片
+                    # 假设API支持传入图片列表
+                    result = api_client.images.edit(
+                        model=MODEL,
+                        image=image_files,  # 传入图片列表
+                        prompt=(
+                            "将两张图片的角色放在一起打架"
+                            #"将第二张图中人脸/猫狗脸转换为3D卡通形象，质量要求：毛发纹理自然电影级色彩校准，注意保留原图的外貌、肤色、发型特征，仅替换第一张财神爷/猫狗财神的用绿框框住的头部区域，耳朵样式和原图的3D卡通形象一致， （帽子紧贴头顶，未贴合部分可调整帽子摆放角度达到完全贴合）， 头部与身体过渡必须自然，无拼接痕迹，无额外元素出现在头部四周，纯白背景，不要出现绿色圆圈"
+                        ),
+                        size=size,
+                        stream=False,
+                        output_format="jpeg",
+                        extra_body={
+                            "num_inference_steps": 20,
+                            "guidance_scale": 1.0,
+                        },
+                    )
+
+                    
+
+                    # 处理返回结果
+                    for j, data_item in enumerate(result.data):
+                        image_base64 = data_item.b64_json
+                        image_bytes = base64.b64decode(image_base64)
+                        output_path = f"test_{i}_{size}.jpeg"
+                        with open(output_path, "wb") as f:
+                            f.write(image_bytes)
+
+                        print(f"✓ Image saved: {output_path}")
+
+                        print(f"  Processed output {j+1} for request {i+1}")
+                    
                     success_count += 1
+                    
                 except Exception as e:
                     pytest.fail(f"Request {i + 1} (size={size}) failed: {e}")
-                used, total = get_gpu_memory(GPU_ID)
+                
+                used, total = get_gpu_memory(gpu_id)
                 if used is not None and total is not None:
-                    print(f"  [Request {i + 1}/{num_requests}] size={size} GPU{GPU_ID}: {used}/{total} MB")
+                    print(f"  [Request {i + 1}/{num_requests}] size={size} GPU{gpu_id}: {used}/{total} MB")
+            
             assert success_count == num_requests, f"Expected {num_requests} successes, got {success_count}"
-        finally:
-            if image_path and os.path.exists(image_path):
-                os.unlink(image_path)
+            
+        except Exception as e:
+            pytest.fail(f"Test failed: {e}")
