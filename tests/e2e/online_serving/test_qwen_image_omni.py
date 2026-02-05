@@ -121,10 +121,13 @@ SERVE_ARGS_IMAGE_EDIT = [
     "--vae-use-slicing",
     "--enforce-eager",
 ]
+# GPU device id for this test (equivalent to export CUDA_VISIBLE_DEVICES="x")
+# Override via env: CUDA_VISIBLE_DEVICES (e.g. pytest ... -E CUDA_VISIBLE_DEVICES=1)
+GPU_ID = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
 
 
-def get_gpu0_memory():
-    """Return (used_mb, total_mb) for GPU 0, or (None, None) if unavailable."""
+def get_gpu_memory(gpu_id: str = "0"):
+    """Return (used_mb, total_mb) for the given GPU, or (None, None) if unavailable."""
     try:
         result = subprocess.check_output(
             [
@@ -132,7 +135,7 @@ def get_gpu0_memory():
                 "--query-gpu=memory.used,memory.total",
                 "--format=csv,noheader,nounits",
                 "-i",
-                "0",
+                gpu_id,
             ],
             stderr=subprocess.DEVNULL,
         )
@@ -145,7 +148,10 @@ def get_gpu0_memory():
 def test_image_edit_loop_omni_server_test() -> None:
     """Use OmniServerTest to start Qwen-Image_Edit-2511, then loop images.edit requests."""
     num_requests = 5
-    with OmniServerTest(MODEL_IMAGE_EDIT_2511, SERVE_ARGS_IMAGE_EDIT) as server:
+    env_dict = {"CUDA_VISIBLE_DEVICES": GPU_ID}
+    with OmniServerTest(
+        MODEL_IMAGE_EDIT_2511, SERVE_ARGS_IMAGE_EDIT, env_dict=env_dict
+    ) as server:
         client_instance = openai.OpenAI(
             base_url=f"http://{server.host}:{server.port}/v1",
             api_key="EMPTY",
@@ -186,9 +192,9 @@ def test_image_edit_loop_omni_server_test() -> None:
                     success_count += 1
                 except Exception as e:
                     pytest.fail(f"Request {i + 1} (size={size}) failed: {e}")
-                used, total = get_gpu0_memory()
+                used, total = get_gpu_memory(GPU_ID)
                 if used is not None and total is not None:
-                    print(f"  [Request {i + 1}/{num_requests}] size={size} GPU0: {used}/{total} MB")
+                    print(f"  [Request {i + 1}/{num_requests}] size={size} GPU{GPU_ID}: {used}/{total} MB")
             assert success_count == num_requests, f"Expected {num_requests} successes, got {success_count}"
         finally:
             if image_path and os.path.exists(image_path):
