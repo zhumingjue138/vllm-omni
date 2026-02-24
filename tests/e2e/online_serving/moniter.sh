@@ -72,7 +72,7 @@ echo "L5 GPU 显存监控已启动"
 echo "RUN_ID: $RUN_ID"
 echo "数据目录: $RUN_DIR"
 echo "采样间隔: ${INTERVAL}s | GPU: $GPU_IDS_RAW"
-echo "实时仪表板: 在 $SCRIPT_DIR 执行 ./serve_dashboard.sh 后访问提示的 URL"
+echo "实时仪表板: 在 $SCRIPT_DIR 执行 ./serve_dashboard.sh 后访问输出的 URL（默认 http://127.0.0.1:8765/gpu_dashboard.html）"
 echo "要停止监控: kill $$ 或 Ctrl+C"
 echo "========================================"
 
