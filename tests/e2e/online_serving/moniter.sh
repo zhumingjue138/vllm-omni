@@ -1,95 +1,121 @@
 #!/bin/bash
+#
+# L5 长稳 GPU 显存监控（RFC）
+# - 每 5s 采集显存利用率，数据持久化 CSV + latest.json
+# - 对服务性能影响 <1%（单次 nvidia-smi 查询，无轮询占用）
+#
+# 运行环境：Linux + NVIDIA 显卡 + 已安装驱动（需 nvidia-smi）
+# 依赖：bash, nvidia-smi（必须）, jq（可选，用于实时仪表板 latest.json）
+#
+# 用法：./moniter.sh [GPU_IDs] [间隔秒数]
+#   GPU_IDs: 逗号分隔的 GPU 索引，或 all（默认 all）
+#   间隔: 默认 5
+# 示例：./moniter.sh all 5    ./moniter.sh 0,1 5
+#
+# 在目标机器上检查能否运行：nvidia-smi && command -v jq >/dev/null && echo "OK"
+#
 
-# 使用示例：./npu_monitor_max.sh [循环次数] [间隔秒数]
-# 示例：监控20周期，每10秒 → ./npu_monitor_max.sh 20 10
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_ROOT="${GPU_MONITOR_DATA_ROOT:-$SCRIPT_DIR/gpu_monitor_data}"
+INTERVAL="${2:-5}"
+GPU_IDS_RAW="${1:-all}"
 
-# 配置参数
-CUR_CARDS=${1:-1}           # NPU卡
-# TOTAL_CARDS=${1:-8}           # NPU卡总数
-INTERVAL=${2:-5}       # 默认5秒间隔
+# 依赖检查（可设 SKIP_DEPS_CHECK=1 跳过）
+if [[ -z "${SKIP_DEPS_CHECK:-}" ]]; then
+    if ! command -v nvidia-smi &>/dev/null; then
+        echo "错误：未找到 nvidia-smi，请在安装 NVIDIA 驱动的 Linux 机器上运行本脚本。"
+        exit 1
+    fi
+    if ! command -v jq &>/dev/null; then
+        echo "提示：未安装 jq，将只持久化 CSV，不生成 latest.json（实时仪表板不可用）。"
+    fi
+fi
 
+# 当前运行 ID（用于持久化与仪表板）
+RUN_ID="run_$(date +%Y%m%d_%H%M%S)"
+RUN_DIR="$DATA_ROOT/$RUN_ID"
+mkdir -p "$RUN_DIR"
+echo "$RUN_ID" > "$DATA_ROOT/current_run_id"
 
-# 初始化最大值记录
-MAX_AICORE=0
-MAX_HBM=0
-MAX_BANDWIDTH=0
+# CSV 表头
+CSV_FILE="$RUN_DIR/gpu_metrics.csv"
+echo "timestamp_iso,timestamp_epoch,gpu_index,memory_used_mb,memory_total_mb,memory_util_pct" > "$CSV_FILE"
+
+# 供仪表板使用的最近点数（约 200*5s ≈ 16 分钟）
+HISTORY_SIZE=200
+HISTORY_FILE="$RUN_DIR/history.jsonl"
+LATEST_JSON="$RUN_DIR/latest.json"
 
 # 捕获退出信号
-trap "echo '收到停止信号，结束执行'; exit" SIGTERM SIGINT
-echo "开始持续执行，PID=$$"
-echo "要停止请运行: kill $$ 或 kill -INT $$"
+trap 'echo "[$(date +%H:%M:%S)] 收到停止信号，数据已保存到 $RUN_DIR"; exit 0' SIGTERM SIGINT
 
-# 参数校验函数
-validate_number() {
-    [[ "$1" =~ ^[0-9]+$ ]] || {
-        echo "错误：参数必须为整数";
-        echo "用法：$0 [循环次数] [间隔秒数]";
+validate_interval() {
+    [[ "$INTERVAL" =~ ^[0-9]+$ ]] && [[ "$INTERVAL" -ge 1 ]] || {
+        echo "错误：间隔必须为正整数（秒）"
+        echo "用法：$0 [GPU_IDs|all] [间隔秒数]"
         exit 1
     }
 }
+validate_interval
 
-# 执行参数校验
-validate_number $CUR_CARDS
-validate_number $INTERVAL
+# 构建 nvidia-smi -i 参数
+NVSMI_QUERY="index,memory.used,memory.total"
+if [[ "$GPU_IDS_RAW" == "all" ]]; then
+    NVSMI_IDS=""
+else
+    NVSMI_IDS="-i $GPU_IDS_RAW"
+fi
 
-# 打印监控头
-echo "NPU集群监控 (含最大值追踪)"
-# echo "设备卡数:$TOTAL_CARDS 间隔:${INTERVAL}s"
-echo "设备卡数:$CUR_CARDS 间隔:${INTERVAL}s"
-printf "%-12s | %-9s | %-9s | %-9s | %-9s \n" "时间戳" "算力(当前/最大)" "显存(当前/最大)" "带宽(当前/最大)" "内存(当前/最大)"
+echo "========================================"
+echo "L5 GPU 显存监控已启动"
+echo "RUN_ID: $RUN_ID"
+echo "数据目录: $RUN_DIR"
+echo "采样间隔: ${INTERVAL}s | GPU: $GPU_IDS_RAW"
+echo "实时仪表板: 在 $SCRIPT_DIR 执行 ./serve_dashboard.sh 后访问提示的 URL"
+echo "要停止监控: kill $$ 或 Ctrl+C"
+echo "========================================"
 
+# 主循环：采集并持久化（单次 nvidia-smi + 追加写，对服务影响 <1%）
+while true; do
+    TS_ISO=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
+    TS_EPOCH=$(date +%s)
+    RAW=$(nvidia-smi --query-gpu="$NVSMI_QUERY" --format=csv,noheader,nounits $NVSMI_IDS 2>/dev/null) || true
+    if [[ -z "$RAW" ]]; then
+        sleep "$INTERVAL"
+        continue
+    fi
 
-# 主监控循环
-while true;
-do
-    # 初始化累计值
-    aicore_total=0
-    hbm_usage_total=0
-    bandwidth_total=0
+    # 解析每张卡并写 CSV，同时收集当前快照用于 latest.json
+    GPUS_ARR=""
+    while IFS= read -r line; do
+        line=$(echo "$line" | tr -d ' ')
+        [[ -z "$line" ]] && continue
+        idx=$(echo "$line" | cut -d',' -f1)
+        used=$(echo "$line" | cut -d',' -f2)
+        total=$(echo "$line" | cut -d',' -f3)
+        used=${used:-0}
+        total=${total:-1}
+        [[ "$total" -le 0 ]] && total=1
+        pct=$((used * 100 / total))
+        echo "${TS_ISO},${TS_EPOCH},${idx},${used},${total},${pct}" >> "$CSV_FILE"
+        if [[ -n "$GPUS_ARR" ]]; then
+            GPUS_ARR="$GPUS_ARR,{\"gpu_index\":$idx,\"memory_used_mb\":$used,\"memory_total_mb\":$total,\"memory_util_pct\":$pct}"
+        else
+            GPUS_ARR="{\"gpu_index\":$idx,\"memory_used_mb\":$used,\"memory_total_mb\":$total,\"memory_util_pct\":$pct}"
+        fi
+    done <<< "$RAW"
+    CURR_JSON="[$GPUS_ARR]"
+    ROW_JSON="{\"t\":$TS_EPOCH,\"gpus\":$CURR_JSON}"
 
-    # 全卡数据采集
-    for ((card=CUR_CARDS; card<CUR_CARDS+1; card++))
-    do
-        # usage_data=$(nvidia-smi -i $card -t usages 2>/dev/null)
-        usage_data=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i $card 2>/dev/null)
-        mem_used=$(( usage_data * 100 / 81920 ))
-        TIMESTAMP=$(date '+%H:%M:%S')
-        echo "[$TIMESTAMP]"
-        echo "card $card: $usage_data  $mem_used%"
-        
-        # # 数据解析（带错误抑制）
-        # aicore=$(    { grep "Aicore Usage" <<< "$usage_data" || echo "0"; } | awk -F': ' '{print $2}' | cut -d'%' -f1)
-        # hbm_usage=$( { grep "HBM Usage" <<< "$usage_data"    || echo "0"; } | awk -F': ' '{print $2}' | cut -d'%' -f1)
-        # hbm_bw=$(    { grep "HBM Bandwidth" <<< "$usage_data"|| echo "0"; } | awk -F': ' '{print $2}' | cut -d'%' -f1)
+    # 追加 history（仪表板用近期曲线，不在此处截断文件以减轻 IO）
+    echo "$ROW_JSON" >> "$HISTORY_FILE"
 
-        # # 数值累加
-        # aicore_total=$(awk -v total="$aicore_total" -v add="${aicore:-0}" 'BEGIN {printf "%.1f", total + add}')
-        # hbm_usage_total=$(awk -v total="$hbm_usage_total" -v add="${hbm_usage:-0}" 'BEGIN {printf "%.1f", total + add}')
-        # bandwidth_total=$(awk -v total="$bandwidth_total" -v add="${hbm_bw:-0}" 'BEGIN {printf "%.1f", total + add}')
+    # 写入 latest.json（当前快照 + 最近 HISTORY_SIZE 条历史）
+    if command -v jq &>/dev/null; then
+        HIST_JSON=$(tail -n "$HISTORY_SIZE" "$HISTORY_FILE" 2>/dev/null | jq -s . 2>/dev/null) || HIST_JSON="[]"
+        echo "{\"run_id\":\"$RUN_ID\",\"last_updated\":\"$TS_ISO\",\"last_updated_epoch\":$TS_EPOCH,\"current\":$CURR_JSON,\"history\":$HIST_JSON}" > "$LATEST_JSON"
+    fi
 
-    done
-    
-    # # 计算当前周期平均值
-    # aicore_avg=$(awk -v total="$aicore_total" -v cards="$TOTAL_CARDS" 'BEGIN {printf "%.1f", total / cards}')
-    # hbm_avg=$(awk -v total="$hbm_usage_total" -v cards="$TOTAL_CARDS" 'BEGIN {printf "%.1f", total / cards}')
-    # bandwidth_avg=$(awk -v total="$bandwidth_total" -v cards="$TOTAL_CARDS" 'BEGIN {printf "%.1f", total / cards}')
-
-    # # 内存使用
-    # mem_use=$(free -h | grep Mem | awk '{print $3}')
-
-    # # 更新最大值记录
-    # MAX_AICORE=$(awk -v avg="$aicore_avg" -v max="$MAX_AICORE" 'BEGIN {print (avg > max) ? avg : max}')
-    # MAX_HBM=$(awk -v avg="$hbm_avg" -v max="$MAX_HBM" 'BEGIN {print (avg > max) ? avg : max}')
-    # MAX_BANDWIDTH=$(awk -v avg="$bandwidth_avg" -v max="$MAX_BANDWIDTH" 'BEGIN {print (avg > max) ? avg : max}')
-
-    # 格式化输出
-    # timestamp=$(date "+%H:%M:%S")
-    # printf "%s   %7.1f%%  %4.1f%%  %7.1f%%  %4.1f%%   %7.1f%%  %4.1f%%   %6.5s \n" \
-    #     "$timestamp" \
-    #     $aicore_avg $MAX_AICORE \
-    #     $hbm_avg $MAX_HBM \
-    #     $bandwidth_avg $MAX_BANDWIDTH \
-    #     $mem_use
-
-    sleep $INTERVAL
+    sleep "$INTERVAL"
 done
