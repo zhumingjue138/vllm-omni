@@ -2,6 +2,13 @@
 
 长稳结束后 CI 环境会被清理，网页和 CSV 都会丢失。通过**在清理前打包并上传为 CI 产物**，流水线结束后仍可下载查看。
 
+## CI 清理后如何查看？（实时仪表盘 vs 静态报告）
+
+- **实时仪表盘**（`gpu_dashboard.html` + `serve_dashboard.sh`）依赖本机 HTTP 服务和 `latest.json`，适合**本地长稳时**边跑边看。CI 跑完环境被回收，**无法在 CI 里提供可访问的网页**。
+- **解决方式**：不在 CI 里依赖实时网页，改用 **静态报告 `report.html`**。`finalize_monitor.sh` 会从 CSV 调用 `generate_report.py` 生成单文件 HTML（图表、统计、异常表均内嵌），**无需任何服务器**。把打包目录上传为 CI artifact，流水线结束后**下载 artifact，在本地用浏览器打开其中的 `report.html`** 即可查看完整显存曲线与统计，不依赖当时的环境与网址。
+
+因此：CI 中只做「监控 → 收尾打包 → 上传 artifact」；查看时从流水线下载 artifact，本地打开 `report.html` 即可。
+
 ## 流程概览
 
 1. **启动监控**：后台运行 `./moniter.sh`，整个长稳期间持续写 CSV。
