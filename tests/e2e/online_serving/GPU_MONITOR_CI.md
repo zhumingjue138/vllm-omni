@@ -9,6 +9,43 @@
 
 因此：CI 中只做「监控 → 收尾打包 → 上传 artifact」；查看时从流水线下载 artifact，本地打开 `report.html` 即可。
 
+## 本地验证（不上 CI）
+
+在 Linux 本机（有 NVIDIA 显卡和 `nvidia-smi`）可以完整走一遍流程，无需等 CI。
+
+### 方式一：一条龙（推荐，和 CI 行为一致）
+
+在仓库根目录执行（与 CI 里 Diffusion Model Test 相同命令）：
+
+```bash
+bash tests/e2e/online_serving/run_with_gpu_monitor.sh -- pytest -s -v tests/e2e/offline_inference/test_t2i_model.py -m "core_model and diffusion" --run-level "core_model"
+```
+
+- 会后台启动 `moniter.sh`、跑 pytest，结束时自动执行 `finalize_monitor.sh`（本地没有 `buildkite-agent` 会跳过上传）。
+- 打包目录在 `tests/e2e/online_serving/gpu_monitor_data/gpu_monitor_bundle_<run_id>/`，里面有 `gpu_metrics.csv`、`report.html`、`README.txt`。用浏览器打开 **report.html** 即可看折线图与统计。
+
+想少跑一会儿可以用更快的用例，例如：
+
+```bash
+bash tests/e2e/online_serving/run_with_gpu_monitor.sh -- pytest -v tests/engine/test_async_omni_engine_abort.py -x
+```
+
+### 方式二：边跑边看网页仪表盘
+
+1. **终端 1**：启动监控  
+   `cd tests/e2e/online_serving && ./moniter.sh all 5`（不要后台，方便结束时 Ctrl+C）
+
+2. **终端 2**：启动仪表盘服务  
+   `cd tests/e2e/online_serving && ./serve_dashboard.sh`  
+   浏览器打开 **http://127.0.0.1:8765/gpu_dashboard.html**，即可实时看折线图。
+
+3. **终端 3**（仓库根目录）：跑测试  
+   `pytest -s -v tests/e2e/offline_inference/test_t2i_model.py -m "core_model and diffusion" --run-level "core_model"`（或任意短测试）
+
+4. 测试结束后，在终端 1 按 **Ctrl+C** 停掉监控，然后执行收尾并打开报告：  
+   `cd tests/e2e/online_serving && ./finalize_monitor.sh`  
+   用脚本输出的 `GPU_MONITOR_BUNDLE_DIR` 里的 **report.html** 在浏览器打开，可核对与仪表盘一致的折线图。
+
 ## 流程概览
 
 1. **启动监控**：后台运行 `./moniter.sh`，整个长稳期间持续写 CSV。
