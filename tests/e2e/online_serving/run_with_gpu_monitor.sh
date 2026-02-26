@@ -42,16 +42,20 @@ cleanup() {
     if [[ -n "$MONITOR_PID" ]] && kill -0 "$MONITOR_PID" 2>/dev/null; then
         kill "$MONITOR_PID" 2>/dev/null || true
     fi
-    # 打包并上传 artifact（仅当有 buildkite-agent 且在 CI 中）
-    if command -v buildkite-agent &>/dev/null && [[ -f "$GPU_MONITOR_DATA_ROOT/current_run_id" ]]; then
+    # 有监控数据时始终打包（本地与 CI 都会生成 bundle）
+    if [[ -f "$GPU_MONITOR_DATA_ROOT/current_run_id" ]]; then
         BUNDLE_LINE=$(./finalize_monitor.sh 2>/dev/null | grep '^GPU_MONITOR_BUNDLE_DIR=') || true
         if [[ -n "$BUNDLE_LINE" ]]; then
             eval "$BUNDLE_LINE"
             if [[ -d "$GPU_MONITOR_BUNDLE_DIR" ]]; then
-                echo "--- 上传 GPU 监控产物 ---"
-                for f in "$GPU_MONITOR_BUNDLE_DIR"/*; do
-                    [[ -e "$f" ]] && buildkite-agent artifact upload "$f"
-                done
+                echo "--- GPU 监控产物: $GPU_MONITOR_BUNDLE_DIR ---"
+                # 仅在 CI 中上传 artifact
+                if command -v buildkite-agent &>/dev/null; then
+                    echo "--- 上传 GPU 监控产物 ---"
+                    for f in "$GPU_MONITOR_BUNDLE_DIR"/*; do
+                        [[ -e "$f" ]] && buildkite-agent artifact upload "$f"
+                    done
+                fi
             fi
         fi
     fi
