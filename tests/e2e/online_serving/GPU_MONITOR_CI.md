@@ -9,42 +9,25 @@
 
 因此：CI 中只做「监控 → 收尾打包 → 上传 artifact」；查看时从流水线下载 artifact，本地打开 `report.html` 即可。
 
-## 本地验证（不上 CI）
+## 本地与 CI 统一：一步完成
 
-在 Linux 本机（有 NVIDIA 显卡和 `nvidia-smi`）可以完整走一遍流程，无需等 CI。
+同一条命令在**本地**和 **CI** 都能用，无需分步。
 
-### 方式一：一条龙（推荐，和 CI 行为一致）
+- **CI**：不设环境变量，直接执行。会启动监控、跑测试、收尾打包并上传 artifact；实时看日志里的 `[GPU]` 行，结束后在 Artifacts 下载 `report.html`。
+- **本地**：同上；若想**边跑边看网页仪表盘**，在命令前加 `GPU_MONITOR_SERVE_DASHBOARD=1`，脚本会同时拉起仪表盘服务，浏览器访问输出的 URL 即可（远程机器需 SSH 端口转发）。
 
-在仓库根目录执行（与 CI 里 Diffusion Model Test 相同命令）：
-
-```bash
-bash tests/e2e/online_serving/run_with_gpu_monitor.sh -- pytest -s -v tests/e2e/offline_inference/test_t2i_model.py -m "core_model and diffusion" --run-level "core_model"
-```
-
-- 会后台启动 `moniter.sh`、跑 pytest，结束时自动执行 `finalize_monitor.sh`（本地没有 `buildkite-agent` 会跳过上传）。
-- 打包目录在 `tests/e2e/online_serving/gpu_monitor_data/gpu_monitor_bundle_<run_id>/`，里面有 `gpu_metrics.csv`、`report.html`、`README.txt`。用浏览器打开 **report.html** 即可看折线图与统计。
-
-想少跑一会儿可以用更快的用例，例如：
+示例（仓库根目录）：
 
 ```bash
-bash tests/e2e/online_serving/run_with_gpu_monitor.sh -- pytest -v tests/engine/test_async_omni_engine_abort.py -x
+# CI 或本地仅要日志 + 结束后 report.html
+bash tests/e2e/online_serving/run_with_gpu_monitor.sh -- pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_text_to_text_async_chunk_003 -v
+
+# 本地想边跑边看仪表盘（一步，无需另开终端）
+GPU_MONITOR_SERVE_DASHBOARD=1 bash tests/e2e/online_serving/run_with_gpu_monitor.sh -- pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_text_to_text_async_chunk_003 -v
 ```
 
-### 方式二：边跑边看网页仪表盘
-
-1. **终端 1**：启动监控  
-   `cd tests/e2e/online_serving && ./moniter.sh all 5`（不要后台，方便结束时 Ctrl+C）
-
-2. **终端 2**：启动仪表盘服务  
-   `cd tests/e2e/online_serving && ./serve_dashboard.sh`  
-   浏览器打开 **http://127.0.0.1:8765/gpu_dashboard.html**，即可实时看折线图。
-
-3. **终端 3**（仓库根目录）：跑测试  
-   `pytest -s -v tests/e2e/offline_inference/test_t2i_model.py -m "core_model and diffusion" --run-level "core_model"`（或任意短测试）
-
-4. 测试结束后，在终端 1 按 **Ctrl+C** 停掉监控，然后执行收尾并打开报告：  
-   `cd tests/e2e/online_serving && ./finalize_monitor.sh`  
-   用脚本输出的 `GPU_MONITOR_BUNDLE_DIR` 里的 **report.html** 在浏览器打开，可核对与仪表盘一致的折线图。
+- 仪表盘 URL 会打印在终端，默认 `http://127.0.0.1:8765/gpu_dashboard.html`。远程机器上在本机执行 `ssh -L 8765:127.0.0.1:8765 用户@主机` 后访问该 URL。
+- 打包目录：`tests/e2e/online_serving/gpu_monitor_data/gpu_monitor_bundle_<run_id>/`，内含 `gpu_metrics.csv`、`report.html`、`README.txt`。
 
 ## 流程概览
 
