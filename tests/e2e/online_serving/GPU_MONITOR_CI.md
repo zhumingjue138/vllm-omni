@@ -86,6 +86,19 @@ artifacts:
 
 **Jenkins**：在 finally 里执行 `finalize_monitor.sh`，用 `archiveArtifacts` 归档 `gpu_monitor_data/gpu_monitor_bundle_*/**`。
 
+### Buildkite（推荐用 run_with_gpu_monitor.sh 一条龙）
+
+用包装脚本一次完成「启动监控 + 跑测试 + 收尾 + 上传 artifact」：
+
+```yaml
+commands:
+  - bash tests/e2e/online_serving/run_with_gpu_monitor.sh -- pytest -s -v tests/e2e/offline_inference/test_t2i_model.py ...
+```
+
+- **用到的脚本**：`run_with_gpu_monitor.sh`（内部会调 `moniter.sh`、`finalize_monitor.sh`、`generate_report.py`）。
+- **运行中「实时」看什么**：CI 没有单独的可访问网页。请打开 **Buildkite 该次构建的 Job 页面**，在**日志区域**里会每隔约 15 秒出现一行 `[GPU] 时间戳,...,gpu_index,used_mb,total_mb,util_pct`，即当前最新一次采样的显存数据，相当于在日志里实时看仪表盘数据。
+- **结束后在哪里下载 GPU 数据**：同一 Job 页面上方或侧边有 **Artifacts**，点进去会看到本步骤上传的文件（如 `gpu_metrics.csv`、`report.html`、`README.txt`）。下载后本地用浏览器打开 `report.html` 即可看到与仪表盘类似的折线图及统计表。
+
 ## 产物内容
 
 - `gpu_metrics.csv`：原始采样（时间戳、GPU 索引、显存占用、利用率）。
