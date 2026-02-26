@@ -68,7 +68,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
-        return super().do_GET(self)
+        return super().do_GET()
 
     def log_message(self, format, *args):
         pass
