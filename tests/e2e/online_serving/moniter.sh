@@ -24,11 +24,11 @@ GPU_IDS_RAW="${1:-all}"
 # 依赖检查（可设 SKIP_DEPS_CHECK=1 跳过）
 if [[ -z "${SKIP_DEPS_CHECK:-}" ]]; then
     if ! command -v nvidia-smi &>/dev/null; then
-        echo "错误：未找到 nvidia-smi，请在安装 NVIDIA 驱动的 Linux 机器上运行本脚本。"
+        echo "Error: nvidia-smi not found. Run this script on a Linux machine with NVIDIA drivers."
         exit 1
     fi
     if ! command -v jq &>/dev/null; then
-        echo "提示：未安装 jq，将只持久化 CSV，不生成 latest.json（实时仪表板不可用）。"
+        echo "Note: jq not installed; only CSV will be written (no latest.json, real-time dashboard unavailable)."
     fi
 fi
 
@@ -48,12 +48,12 @@ HISTORY_FILE="$RUN_DIR/history.jsonl"
 LATEST_JSON="$RUN_DIR/latest.json"
 
 # 捕获退出信号
-trap 'echo "[$(date +%H:%M:%S)] 收到停止信号，数据已保存到 $RUN_DIR"; exit 0' SIGTERM SIGINT
+trap 'echo "[$(date +%H:%M:%S)] Stopping; data saved to $RUN_DIR"; exit 0' SIGTERM SIGINT
 
 validate_interval() {
     [[ "$INTERVAL" =~ ^[0-9]+$ ]] && [[ "$INTERVAL" -ge 1 ]] || {
-        echo "错误：间隔必须为正整数（秒）"
-        echo "用法：$0 [GPU_IDs|all] [间隔秒数]"
+        echo "Error: interval must be a positive integer (seconds)"
+        echo "Usage: $0 [GPU_IDs|all] [interval_seconds]"
         exit 1
     }
 }
@@ -68,12 +68,12 @@ else
 fi
 
 echo "========================================"
-echo "L5 GPU 显存监控已启动"
+echo "L5 GPU memory monitor started"
 echo "RUN_ID: $RUN_ID"
-echo "数据目录: $RUN_DIR"
-echo "采样间隔: ${INTERVAL}s | GPU: $GPU_IDS_RAW"
-echo "实时仪表板: 在 $SCRIPT_DIR 执行 ./serve_dashboard.sh 后访问输出的 URL（默认 http://127.0.0.1:8765/gpu_dashboard.html）"
-echo "要停止监控: kill $$ 或 Ctrl+C"
+echo "Data dir: $RUN_DIR"
+echo "Interval: ${INTERVAL}s | GPU: $GPU_IDS_RAW"
+echo "Live dashboard: run ./serve_dashboard.sh in $SCRIPT_DIR, then open the URL (default http://127.0.0.1:8765/gpu_dashboard.html)"
+echo "To stop: kill $$ or Ctrl+C"
 echo "========================================"
 
 # 主循环：采集并持久化（单次 nvidia-smi + 追加写，对服务影响 <1%）

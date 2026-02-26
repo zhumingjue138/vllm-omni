@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 if [[ ${#CMD[@]} -eq 0 ]]; then
-    echo "用法: $0 -- <要执行的命令>" >&2
+    echo "Usage: $0 -- <command to run>" >&2
     exit 1
 fi
 
@@ -50,7 +50,7 @@ cleanup() {
     fi
     # 有监控数据时始终打包（本地与 CI 都会生成 bundle）；仅在测试完全结束后执行
     if [[ -f "$GPU_MONITOR_DATA_ROOT/current_run_id" ]]; then
-        echo "--- 收尾：打包 GPU 监控数据 ---"
+        echo "--- Finalizing: bundling GPU monitor data ---"
         TMPF=$(mktemp)
         ./finalize_monitor.sh 2>&1 | tee "$TMPF"
         BUNDLE_LINE=$(grep '^GPU_MONITOR_BUNDLE_DIR=' "$TMPF" || true)
@@ -58,18 +58,18 @@ cleanup() {
         if [[ -n "$BUNDLE_LINE" ]]; then
             eval "$BUNDLE_LINE"
             if [[ -d "$GPU_MONITOR_BUNDLE_DIR" ]]; then
-                echo "--- GPU 监控产物目录: $GPU_MONITOR_BUNDLE_DIR ---"
-                echo "--- 用浏览器打开其中的 report.html 查看折线图 ---"
+                echo "--- GPU monitor bundle dir: $GPU_MONITOR_BUNDLE_DIR ---"
+                echo "--- Line chart (memory utilization): open in browser: $GPU_MONITOR_BUNDLE_DIR/report.html ---"
                 # 仅在 CI 中上传 artifact
                 if command -v buildkite-agent &>/dev/null; then
-                    echo "--- 上传 GPU 监控产物 ---"
+                    echo "--- Uploading GPU monitor artifacts ---"
                     for f in "$GPU_MONITOR_BUNDLE_DIR"/*; do
                         [[ -e "$f" ]] && buildkite-agent artifact upload "$f"
                     done
                 fi
             fi
         else
-            echo "--- 未生成 bundle，请查看上方 finalize_monitor.sh 的错误输出 ---"
+            echo "--- Bundle not created; check finalize_monitor.sh output above for errors ---"
         fi
     fi
     exit "${TEST_EXIT_CODE:-0}"
@@ -81,17 +81,17 @@ trap 'cleanup' EXIT
 if command -v nvidia-smi &>/dev/null; then
     ./moniter.sh all 5 &
     MONITOR_PID=$!
-    echo "[GPU Monitor] 已启动 moniter.sh (PID $MONITOR_PID)，每 5s 采集显存；日志每 15s 打印最新一行。"
+    echo "[GPU Monitor] Started moniter.sh (PID $MONITOR_PID), sampling every 5s; log prints latest line every 15s."
     # 可选：同时启动网页仪表盘（本地设 GPU_MONITOR_SERVE_DASHBOARD=1；CI 不设则跳过）
     if [[ -n "${GPU_MONITOR_SERVE_DASHBOARD:-}" ]] && command -v python3 &>/dev/null; then
         sleep 2
         ./serve_dashboard.sh "$DASHBOARD_PORT" &
         DASHBOARD_PID=$!
-        echo "[GPU Monitor] 已启动仪表盘 (PID $DASHBOARD_PID)，浏览器访问: http://127.0.0.1:$DASHBOARD_PORT/gpu_dashboard.html"
-        echo "[GPU Monitor] 若为远程机器，请在本机执行: ssh -L $DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT <用户>@<主机> 后访问上述 URL"
+        echo "[GPU Monitor] Dashboard started (PID $DASHBOARD_PID). Open in browser: http://127.0.0.1:$DASHBOARD_PORT/gpu_dashboard.html"
+        echo "[GPU Monitor] On a remote host, run on your machine: ssh -L $DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT <user>@<host> then open the URL above"
     fi
 else
-    echo "[GPU Monitor] 未检测到 nvidia-smi，跳过 GPU 监控。"
+    echo "[GPU Monitor] nvidia-smi not found; skipping GPU monitor."
 fi
 
 # 后台：每 15s 将最新一行 CSV 打印到 stdout，便于在 CI 日志中实时查看

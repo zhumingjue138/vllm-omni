@@ -114,15 +114,15 @@ def render_html(
         ts = a.get("timestamp_iso", "")
         anomaly_cells.append(
             f"<tr><td>{ts}</td><td>GPU {a.get('gpu_index')}</td>"
-            f"<td>{a.get('memory_util_pct')}%</td><td>{a.get('type')} (阈值 {a.get('threshold')}%)</td></tr>"
+            f"<td>{a.get('memory_util_pct')}%</td><td>{a.get('type')} (threshold {a.get('threshold')}%)</td></tr>"
         )
-    anomaly_table = "\n".join(anomaly_cells) if anomaly_cells else "<tr><td colspan='4'>无</td></tr>"
+    anomaly_table = "\n".join(anomaly_cells) if anomaly_cells else "<tr><td colspan='4'>None</td></tr>"
 
     html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>GPU 显存监控报告 - {run_id}</title>
+  <title>GPU memory monitor report - {run_id}</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     body {{ font-family: system-ui,sans-serif; margin: 1rem; background: #1a1a2e; color: #eee; }}
@@ -132,18 +132,18 @@ def render_html(
   </style>
 </head>
 <body>
-  <h1>L5 GPU 显存监控报告</h1>
-  <p class="meta">Run: {run_id} | 数据文件: {os.path.basename(csv_path)} | 采样数: {len(rows)}</p>
-  <h2>统计</h2>
+  <h1>L5 GPU memory monitor report</h1>
+  <p class="meta">Run: {run_id} | Data file: {os.path.basename(csv_path)} | Samples: {len(rows)}</p>
+  <h2>Statistics</h2>
   <table>
-    <tr><th>GPU</th><th>最小%</th><th>最大%</th><th>平均%</th><th>P50</th><th>P95</th><th>采样数</th></tr>
+    <tr><th>GPU</th><th>Min %</th><th>Max %</th><th>Avg %</th><th>P50</th><th>P95</th><th>Samples</th></tr>
     {stats_table}
   </table>
-  <h2>显存利用率时序</h2>
+  <h2>Memory utilization over time (line chart)</h2>
   <canvas id="chart"></canvas>
-  <h2>异常点（高/低阈值）</h2>
+  <h2>Anomalies (high/low threshold)</h2>
   <table>
-    <tr><th>时间</th><th>GPU</th><th>利用率</th><th>类型</th></tr>
+    <tr><th>Time</th><th>GPU</th><th>Util %</th><th>Type</th></tr>
     {anomaly_table}
   </table>
   <script>
@@ -169,17 +169,17 @@ def render_html(
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("用法: generate_report.py <gpu_metrics.csv> [output.html]", file=sys.stderr)
+        print("Usage: generate_report.py <gpu_metrics.csv> [output.html]", file=sys.stderr)
         return 1
     csv_path = sys.argv[1]
     out_path = sys.argv[2] if len(sys.argv) > 2 else csv_path.replace(".csv", "_report.html")
     if not os.path.isfile(csv_path):
-        print(f"文件不存在: {csv_path}", file=sys.stderr)
+        print(f"File not found: {csv_path}", file=sys.stderr)
         return 1
     run_id = Path(csv_path).parent.name
     rows = load_csv(csv_path)
     if not rows:
-        print("CSV 无有效数据", file=sys.stderr)
+        print("CSV has no valid data", file=sys.stderr)
         return 1
     stats = compute_stats(rows)
     anomalies = find_anomalies(rows)

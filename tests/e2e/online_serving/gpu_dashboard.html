@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>L5 GPU 显存监控</title>
+  <title>L5 GPU memory monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     * { box-sizing: border-box; }
@@ -21,13 +21,13 @@
   </style>
 </head>
 <body>
-  <h1>L5 GPU 显存监控</h1>
-  <p class="meta">最后更新: <span id="lastUpdated">-</span> &nbsp; Run: <span id="runId">-</span></p>
+  <h1>L5 GPU memory monitor</h1>
+  <p class="meta">Last updated: <span id="lastUpdated">-</span> &nbsp; Run: <span id="runId">-</span></p>
   <div class="cards" id="cards"></div>
   <div class="chart-wrap">
     <canvas id="chart"></canvas>
   </div>
-  <p class="no-data" id="noData">暂无数据，请先启动 moniter.sh 并等待数秒。</p>
+  <p class="no-data" id="noData">No data yet. Start moniter.sh and wait a few seconds.</p>
 
   <script>
     const API = "/api/latest";
@@ -58,7 +58,7 @@
 
           const history = data.history || [];
           if (history.length) {
-            const labels = history.map(h => new Date(h.t * 1000).toLocaleTimeString("zh-CN", { hour12: false }));
+            const labels = history.map(h => new Date(h.t * 1000).toLocaleTimeString("en", { hour12: false }));
             const gpuIndices = data.current ? data.current.map(g => g.gpu_index) : [0];
             const datasets = gpuIndices.map((idx, i) => ({
               label: `GPU ${idx}`,
@@ -79,8 +79,8 @@
                   responsive: true,
                   maintainAspectRatio: true,
                   scales: {
-                    y: { min: 0, max: 100, title: { display: true, text: "显存利用率 %" } },
-                    x: { title: { display: true, text: "时间" } }
+                    y: { min: 0, max: 100, title: { display: true, text: "Memory util %" } },
+                    x: { title: { display: true, text: "Time" } }
                   }
                 }
               });

@@ -12,16 +12,16 @@ DATA_ROOT="${GPU_MONITOR_DATA_ROOT:-$SCRIPT_DIR/gpu_monitor_data}"
 PORT="${1:-8765}"
 
 if ! command -v python3 &>/dev/null; then
-    echo "错误：未找到 python3，无法启动仪表板服务。"
+    echo "Error: python3 not found; cannot start dashboard server."
     exit 1
 fi
 
 cd "$SCRIPT_DIR"
 echo "========================================"
-echo "GPU 监控仪表板"
-echo "数据目录: $DATA_ROOT"
-echo "访问地址: http://127.0.0.1:$PORT/gpu_dashboard.html"
-echo "按 Ctrl+C 停止服务"
+echo "GPU monitor dashboard"
+echo "Data dir: $DATA_ROOT"
+echo "Open in browser: http://127.0.0.1:$PORT/gpu_dashboard.html"
+echo "Press Ctrl+C to stop"
 echo "========================================"
 exec python3 - "$PORT" "$DATA_ROOT" "$SCRIPT_DIR" << 'PY'
 import http.server

@@ -17,20 +17,20 @@ if [[ -z "$RUN_ID" ]]; then
     if [[ -f "$DATA_ROOT/current_run_id" ]]; then
         RUN_ID=$(cat "$DATA_ROOT/current_run_id")
     else
-        echo "错误：未指定 run_id 且不存在 $DATA_ROOT/current_run_id" >&2
+        echo "Error: run_id not specified and $DATA_ROOT/current_run_id does not exist" >&2
         exit 1
     fi
 fi
 
 RUN_DIR="$DATA_ROOT/$RUN_ID"
 if [[ ! -d "$RUN_DIR" ]]; then
-    echo "错误：run 目录不存在: $RUN_DIR" >&2
+    echo "Error: run dir does not exist: $RUN_DIR" >&2
     exit 1
 fi
 
 CSV_FILE="$RUN_DIR/gpu_metrics.csv"
 if [[ ! -f "$CSV_FILE" ]]; then
-    echo "错误：CSV 不存在: $CSV_FILE" >&2
+    echo "Error: CSV not found: $CSV_FILE" >&2
     exit 1
 fi
 
@@ -49,23 +49,23 @@ fi
 REPORT_HTML="$BUNDLE_DIR/report.html"
 if command -v python3 &>/dev/null; then
     if python3 "$SCRIPT_DIR/generate_report.py" "$CSV_FILE" "$REPORT_HTML"; then
-        echo "已生成报告: $REPORT_HTML"
+        echo "Report generated: $REPORT_HTML"
     else
-        echo "警告：报告生成失败，仅归档 CSV" >&2
+        echo "Warning: report generation failed; only CSV archived" >&2
     fi
 else
-    echo "警告：未找到 python3，跳过报告生成，仅归档 CSV" >&2
+    echo "Warning: python3 not found; skipping report, only CSV archived" >&2
 fi
 
 # 简要说明，便于下载后查看
 cat > "$BUNDLE_DIR/README.txt" << EOF
-L5 GPU 显存监控归档 - ${RUN_ID}
-- gpu_metrics.csv: 原始采样数据（timestamp_iso, timestamp_epoch, gpu_index, memory_used_mb, memory_total_mb, memory_util_pct）
-- report.html: 带图表与异常标记的分析报告（用浏览器打开）
-请在 CI 中将本目录整体上传为 artifact，长稳结束后即可从流水线下载查看。
+L5 GPU monitor bundle - ${RUN_ID}
+- gpu_metrics.csv: raw samples (timestamp_iso, timestamp_epoch, gpu_index, memory_used_mb, memory_total_mb, memory_util_pct)
+- report.html: report with charts and anomaly markers (open in browser)
+Upload this dir as a CI artifact to view after the run.
 EOF
 
 # 供 CI 解析：归档此目录即可保留监控数据与报告
 BUNDLE_ABS=$(cd "$BUNDLE_DIR" && pwd)
 echo "GPU_MONITOR_BUNDLE_DIR=$BUNDLE_ABS"
-echo "归档路径: $BUNDLE_ABS"
+echo "Archive path: $BUNDLE_ABS"
