@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""
+从 moniter.sh 产出的 CSV 生成 GPU 显存监控报告（HTML，含图表与简单异常标记）。
+用于长稳结束后在 CI 中生成可归档的报告，环境清理后仍可查看。
+"""
+from __future__ import annotations
+
+import csv
+import os
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+
+def load_csv(csv_path: str) -> list[dict]:
+    rows = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            try:
+                r["timestamp_epoch"] = int(float(r["timestamp_epoch"]))
+                r["gpu_index"] = int(r["gpu_index"])
+                r["memory_used_mb"] = int(r["memory_used_mb"])
+                r["memory_total_mb"] = int(r["memory_total_mb"])
+                r["memory_util_pct"] = int(r["memory_util_pct"])
+                rows.append(r)
+            except (KeyError, ValueError):
+                continue
+    return rows
+
+
+def compute_stats(rows: list[dict]) -> dict:
+    by_gpu = defaultdict(list)
+    for r in rows:
+        by_gpu[r["gpu_index"]].append(r["memory_util_pct"])
+    stats = {}
+    for gpu, pcts in by_gpu.items():
+        if not pcts:
+            continue
+        pcts_sorted = sorted(pcts)
+        n = len(pcts_sorted)
+        stats[gpu] = {
+            "min": min(pcts),
+            "max": max(pcts),
+            "avg": round(sum(pcts) / n, 1),
+            "p50": pcts_sorted[n // 2] if n else 0,
+            "p95": pcts_sorted[int(n * 0.95)] if n > 1 else pcts_sorted[0],
+            "samples": n,
+        }
+    return stats
+
+
+def find_anomalies(rows: list[dict], high_pct: int = 95, low_pct: int = 5) -> list[dict]:
+    """简单异常：显存利用率超过 high_pct 或低于 low_pct 的采样点。"""
+    anomalies = []
+    for r in rows:
+        pct = r["memory_util_pct"]
+        if pct >= high_pct:
+            anomalies.append({**r, "type": "high", "threshold": high_pct})
+        elif pct <= low_pct and pct > 0:
+            anomalies.append({**r, "type": "low", "threshold": low_pct})
+    return anomalies
+
+
+def build_series_by_gpu(rows: list[dict]) -> tuple[list[float], dict[int, list[float]]]:
+    """按时间顺序去重得到时间戳列表，以及每个 GPU 的利用率序列。"""
+    times = []
+    by_ts_gpu = defaultdict(dict)
+    for r in rows:
+        t = r["timestamp_epoch"]
+        g = r["gpu_index"]
+        by_ts_gpu[t][g] = r["memory_util_pct"]
+    for t in sorted(by_ts_gpu.keys()):
+        times.append(t)
+    gpu_series = defaultdict(list)
+    for t in times:
+        gpus = by_ts_gpu[t]
+        for g in sorted(gpus.keys()):
+            gpu_series[g].append(gpus[g])
+    return times, dict(gpu_series)
+
+
+def render_html(
+    run_id: str,
+    csv_path: str,
+    rows: list[dict],
+    stats: dict,
+    anomalies: list[dict],
+    out_path: str,
+) -> None:
+    times, gpu_series = build_series_by_gpu(rows)
+    labels_js = [f'new Date({t*1000}).toISOString()' for t in times]
+    datasets_js = []
+    colors = ["#e94560", "#0f3460", "#533483", "#16c79a"]
+    for i, (gpu, series) in enumerate(sorted(gpu_series.items())):
+        color = colors[i % len(colors)]
+        data_str = ",".join(str(v) for v in series)
+        datasets_js.append(
+            f'{{ label: "GPU {gpu}", data: [{data_str}], borderColor: "{color}", '
+            f'backgroundColor: "{color}20", fill: true, tension: 0.2 }}'
+        )
+
+    stats_rows = []
+    for gpu in sorted(stats.keys()):
+        s = stats[gpu]
+        stats_rows.append(
+            f"<tr><td>GPU {gpu}</td><td>{s['min']}%</td><td>{s['max']}%</td>"
+            f"<td>{s['avg']}%</td><td>{s['p50']}</td><td>{s['p95']}</td><td>{s['samples']}</td></tr>"
+        )
+    stats_table = "\n".join(stats_rows)
+
+    anomaly_rows = anomalies[:200]
+    anomaly_cells = []
+    for a in anomaly_rows:
+        ts = a.get("timestamp_iso", "")
+        anomaly_cells.append(
+            f"<tr><td>{ts}</td><td>GPU {a.get('gpu_index')}</td>"
+            f"<td>{a.get('memory_util_pct')}%</td><td>{a.get('type')} (阈值 {a.get('threshold')}%)</td></tr>"
+        )
+    anomaly_table = "\n".join(anomaly_cells) if anomaly_cells else "<tr><td colspan='4'>无</td></tr>"
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>GPU 显存监控报告 - {run_id}</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body {{ font-family: system-ui,sans-serif; margin: 1rem; background: #1a1a2e; color: #eee; }}
+    h1 {{ font-size: 1.25rem; }} .meta {{ color: #888; margin-bottom: 1rem; }}
+    table {{ border-collapse: collapse; margin: 1rem 0; }} th, td {{ border: 1px solid #333; padding: 0.4rem 0.6rem; text-align: left; }}
+    th {{ background: #16213e; }} canvas {{ max-height: 400px; }}
+  </style>
+</head>
+<body>
+  <h1>L5 GPU 显存监控报告</h1>
+  <p class="meta">Run: {run_id} | 数据文件: {os.path.basename(csv_path)} | 采样数: {len(rows)}</p>
+  <h2>统计</h2>
+  <table>
+    <tr><th>GPU</th><th>最小%</th><th>最大%</th><th>平均%</th><th>P50</th><th>P95</th><th>采样数</th></tr>
+    {stats_table}
+  </table>
+  <h2>显存利用率时序</h2>
+  <canvas id="chart"></canvas>
+  <h2>异常点（高/低阈值）</h2>
+  <table>
+    <tr><th>时间</th><th>GPU</th><th>利用率</th><th>类型</th></tr>
+    {anomaly_table}
+  </table>
+  <script>
+    new Chart(document.getElementById("chart"), {{
+      type: "line",
+      data: {{
+        labels: [{",".join(labels_js)}],
+        datasets: [{",".join(datasets_js)}]
+      }},
+      options: {{
+        responsive: true,
+        scales: {{ y: {{ min: 0, max: 100 }} }}
+      }}
+    }});
+  </script>
+</body>
+</html>
+"""
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("用法: generate_report.py <gpu_metrics.csv> [output.html]", file=sys.stderr)
+        return 1
+    csv_path = sys.argv[1]
+    out_path = sys.argv[2] if len(sys.argv) > 2 else csv_path.replace(".csv", "_report.html")
+    if not os.path.isfile(csv_path):
+        print(f"文件不存在: {csv_path}", file=sys.stderr)
+        return 1
+    run_id = Path(csv_path).parent.name
+    rows = load_csv(csv_path)
+    if not rows:
+        print("CSV 无有效数据", file=sys.stderr)
+        return 1
+    stats = compute_stats(rows)
+    anomalies = find_anomalies(rows)
+    render_html(run_id, csv_path, rows, stats, anomalies, out_path)
+    print(out_path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
