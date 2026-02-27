@@ -9,6 +9,14 @@ steps:
     agents:
       queue: "cpu_queue_premerge"
 
+  - label: "Upload L5 Pipeline"
+    depends_on: image-build
+    if: build.env("L5") == "1"
+    commands:
+      - buildkite-agent pipeline upload .buildkite/test-L5.yml
+    agents:
+      queue: "cpu_queue_premerge"
+
   # - label: "Test on NPU"
   #   depends_on: ~
   #   key: npu-test
