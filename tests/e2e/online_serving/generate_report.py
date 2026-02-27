@@ -9,6 +9,7 @@ import csv
 import os
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 
@@ -88,7 +89,11 @@ def render_html(
     out_path: str,
 ) -> None:
     times, gpu_series = build_series_by_gpu(rows)
-    labels_js = [f'new Date({t*1000}).toISOString()' for t in times]
+    # X 轴时间：例如 02-27 11:38:07（本地时区），便于长稳时阅读
+    labels_js = [
+        f'"{datetime.fromtimestamp(t).strftime("%m-%d %H:%M:%S")}"'
+        for t in times
+    ]
     datasets_js = []
     colors = ["#e94560", "#0f3460", "#533483", "#16c79a"]
     for i, (gpu, series) in enumerate(sorted(gpu_series.items())):
@@ -139,25 +144,75 @@ def render_html(
     <tr><th>GPU</th><th>Min %</th><th>Max %</th><th>Avg %</th><th>P50</th><th>P95</th><th>Samples</th></tr>
     {stats_table}
   </table>
-  <h2>Memory utilization over time (line chart)</h2>
-  <canvas id="chart"></canvas>
+  <h2>Memory utilization over time</h2>
+  <button id="toggleMode">Split per GPU</button>
+  <div id="chartsContainer">
+    <canvas id="chart"></canvas>
+  </div>
   <h2>Anomalies (high/low threshold)</h2>
   <table>
     <tr><th>Time</th><th>GPU</th><th>Util %</th><th>Type</th></tr>
     {anomaly_table}
   </table>
   <script>
-    new Chart(document.getElementById("chart"), {{
-      type: "line",
-      data: {{
-        labels: [{",".join(labels_js)}],
-        datasets: [{",".join(datasets_js)}]
-      }},
-      options: {{
-        responsive: true,
-        scales: {{ y: {{ min: 0, max: 100 }} }}
+    const labels = [{",".join(labels_js)}];
+    const gpuDatasets = [{",".join(datasets_js)}];
+
+    let mode = "combined";
+    let charts = [];
+
+    const commonOptions = {{
+      responsive: true,
+      scales: {{ y: {{ min: 0, max: 100 }} }}
+    }};
+
+    function destroyCharts() {{
+      charts.forEach(c => c.destroy());
+      charts = [];
+    }}
+
+    function renderCombined() {{
+      const container = document.getElementById("chartsContainer");
+      container.innerHTML = '<canvas id="chart"></canvas>';
+      const ctx = document.getElementById("chart");
+      charts = [new Chart(ctx, {{
+        type: "line",
+        data: {{ labels, datasets: gpuDatasets }},
+        options: commonOptions
+      }})];
+    }}
+
+    function renderSplit() {{
+      const container = document.getElementById("chartsContainer");
+      container.innerHTML = "";
+      charts = [];
+      gpuDatasets.forEach((ds, idx) => {{
+        const canvas = document.createElement("canvas");
+        canvas.id = "chart-gpu-" + idx;
+        container.appendChild(canvas);
+        charts.push(new Chart(canvas, {{
+          type: "line",
+          data: {{ labels, datasets: [ds] }},
+          options: commonOptions
+        }}));
+      }});
+    }}
+
+    document.getElementById("toggleMode").addEventListener("click", () => {{
+      destroyCharts();
+      if (mode === "combined") {{
+        mode = "split";
+        document.getElementById("toggleMode").textContent = "Combine all GPUs";
+        renderSplit();
+      }} else {{
+        mode = "combined";
+        document.getElementById("toggleMode").textContent = "Split per GPU";
+        renderCombined();
       }}
     }});
+
+    // Default: combined chart
+    renderCombined();
   </script>
 </body>
 </html>
