@@ -3,7 +3,7 @@
 # L5 GPU memory monitor - single entry script.
 # Subcommands: start | finalize | serve [port] | run -- <command>
 #
-# start   - Background: nvidia-smi loop, write CSV + latest.json (like moniter.sh)
+# start   - Background: nvidia-smi loop, write CSV only
 # finalize - Bundle current run (CSV + report.html), print GPU_MONITOR_BUNDLE_DIR=
 # serve   - HTTP server for gpu_dashboard.html + /api/latest (default port 8765)
 # run     - Start monitor (+ optional dashboard), run command, then finalize; in CI upload artifacts
@@ -26,9 +26,6 @@ cmd_start() {
             echo "Error: nvidia-smi not found. Run this script on a Linux machine with NVIDIA drivers."
             exit 1
         fi
-        if ! command -v jq &>/dev/null; then
-            echo "Note: jq not installed; only CSV will be written (no latest.json)."
-        fi
     fi
 
     [[ "$INTERVAL" =~ ^[0-9]+$ ]] && [[ "$INTERVAL" -ge 1 ]] || {
@@ -45,10 +42,6 @@ cmd_start() {
     local CSV_FILE="$RUN_DIR/gpu_metrics.csv"
     echo "timestamp_iso,timestamp_epoch,gpu_index,memory_used_mb,memory_total_mb,memory_util_pct" > "$CSV_FILE"
 
-    local HISTORY_SIZE=200
-    local HISTORY_FILE="$RUN_DIR/history.jsonl"
-    local LATEST_JSON="$RUN_DIR/latest.json"
-
     local NVSMI_QUERY="index,memory.used,memory.total"
     local NVSMI_IDS=""
     [[ "$GPU_IDS_RAW" != "all" ]] && NVSMI_IDS="-i $GPU_IDS_RAW"
@@ -60,11 +53,10 @@ cmd_start() {
     echo "RUN_ID: $RUN_ID"
     echo "Data dir: $RUN_DIR"
     echo "Interval: ${INTERVAL}s | GPU: $GPU_IDS_RAW"
-    echo "Live dashboard: $0 serve in $SCRIPT_DIR, then open URL (default http://127.0.0.1:8765/gpu_dashboard.html)"
     echo "========================================"
 
     while true; do
-        local TS_ISO TS_EPOCH RAW GPUS_ARR CURR_JSON ROW_JSON
+        local TS_ISO TS_EPOCH RAW
         TS_ISO=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
         TS_EPOCH=$(date +%s)
         RAW=$(nvidia-smi --query-gpu="$NVSMI_QUERY" --format=csv,noheader,nounits $NVSMI_IDS 2>/dev/null) || true
@@ -73,7 +65,6 @@ cmd_start() {
             continue
         fi
 
-        GPUS_ARR=""
         while IFS= read -r line; do
             line=$(echo "$line" | tr -d ' ')
             [[ -z "$line" ]] && continue
@@ -86,21 +77,7 @@ cmd_start() {
             [[ "$total" -le 0 ]] && total=1
             pct=$((used * 100 / total))
             echo "${TS_ISO},${TS_EPOCH},${idx},${used},${total},${pct}" >> "$CSV_FILE"
-            if [[ -n "$GPUS_ARR" ]]; then
-                GPUS_ARR="$GPUS_ARR,{\"gpu_index\":$idx,\"memory_used_mb\":$used,\"memory_total_mb\":$total,\"memory_util_pct\":$pct}"
-            else
-                GPUS_ARR="{\"gpu_index\":$idx,\"memory_used_mb\":$used,\"memory_total_mb\":$total,\"memory_util_pct\":$pct}"
-            fi
         done <<< "$RAW"
-        CURR_JSON="[$GPUS_ARR]"
-        ROW_JSON="{\"t\":$TS_EPOCH,\"gpus\":$CURR_JSON}"
-        echo "$ROW_JSON" >> "$HISTORY_FILE"
-
-        if command -v jq &>/dev/null; then
-            local HIST_JSON
-            HIST_JSON=$(tail -n "$HISTORY_SIZE" "$HISTORY_FILE" 2>/dev/null | jq -s . 2>/dev/null) || HIST_JSON="[]"
-            echo "{\"run_id\":\"$RUN_ID\",\"last_updated\":\"$TS_ISO\",\"last_updated_epoch\":$TS_EPOCH,\"current\":$CURR_JSON,\"history\":$HIST_JSON}" > "$LATEST_JSON"
-        fi
 
         sleep "$INTERVAL"
     done
@@ -136,7 +113,6 @@ cmd_finalize() {
     mkdir -p "$BUNDLE_DIR"
 
     cp "$CSV_FILE" "$BUNDLE_DIR/gpu_metrics.csv"
-    [[ -f "$RUN_DIR/history.jsonl" ]] && cp "$RUN_DIR/history.jsonl" "$BUNDLE_DIR/" 2>/dev/null || true
 
     local REPORT_HTML="$BUNDLE_DIR/report.html"
     if command -v python3 &>/dev/null; then
@@ -331,7 +307,7 @@ case "$SUBCMD" in
     run)     cmd_run "$@" ;;
     *)
         echo "Usage: $0 { start [gpu_ids] [interval] | finalize [run_id] | serve [port] | run -- <command> }" >&2
-        echo "  start   - background nvidia-smi loop (CSV + latest.json)" >&2
+        echo "  start   - background nvidia-smi loop (CSV only)" >&2
         echo "  finalize - bundle current run, print GPU_MONITOR_BUNDLE_DIR=" >&2
         echo "  serve   - HTTP server for dashboard (default port 8765)" >&2
         echo "  run     - start + [optional dashboard] + command + finalize (+ CI upload)" >&2
