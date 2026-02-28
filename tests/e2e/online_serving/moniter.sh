@@ -18,8 +18,10 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_ROOT="${GPU_MONITOR_DATA_ROOT:-$SCRIPT_DIR/gpu_monitor_data}"
-INTERVAL="${2:-5}"
-GPU_IDS_RAW="${1:-all}"
+# Interval (seconds): env GPU_MONITOR_INTERVAL or second positional arg; default 5
+INTERVAL="${2:-${GPU_MONITOR_INTERVAL:-5}}"
+# GPU IDs: env GPU_MONITOR_DEVICES or first positional arg; "all" or "0,1,2"
+GPU_IDS_RAW="${1:-${GPU_MONITOR_DEVICES:-all}}"
 
 # 依赖检查（可设 SKIP_DEPS_CHECK=1 跳过）
 if [[ -z "${SKIP_DEPS_CHECK:-}" ]]; then

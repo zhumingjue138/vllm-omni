@@ -7,8 +7,13 @@
 # - 测试结束后打包 CSV + report.html 并上传 Buildkite artifact（CI）或仅生成本地 bundle（本地）
 #
 # 用法：./run_with_gpu_monitor.sh -- <任意要执行的命令>
-# 本地想边跑边看仪表盘：GPU_MONITOR_SERVE_DASHBOARD=1 ./run_with_gpu_monitor.sh -- pytest ...
-# CI 中不设该变量即可，无需额外步骤。
+# 可选环境变量：
+#   GPU_MONITOR_INTERVAL=60       采样间隔（秒），默认 5
+#   GPU_MONITOR_DEVICES=0,1       监控的 GPU，默认 all
+#   GPU_MONITOR_LOG_INTERVAL=30   日志里打印最新一行的间隔（秒），默认 15
+#   GPU_MONITOR_SERVE_DASHBOARD=1 本地边跑边看仪表盘
+# 示例：GPU_MONITOR_INTERVAL=60 ./run_with_gpu_monitor.sh -- pytest ...
+# CI 中不设这些变量即可，使用默认值。
 #
 
 set -e
@@ -18,6 +23,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$SCRIPT_DIR"
 export GPU_MONITOR_DATA_ROOT="${GPU_MONITOR_DATA_ROOT:-$SCRIPT_DIR/gpu_monitor_data}"
 export SKIP_DEPS_CHECK="${SKIP_DEPS_CHECK:-1}"
+# Sampling interval (seconds); default 5. Example: GPU_MONITOR_INTERVAL=60
+export GPU_MONITOR_INTERVAL="${GPU_MONITOR_INTERVAL:-5}"
+# GPU IDs to monitor: "all" or comma-separated e.g. "0,1"; default all
+export GPU_MONITOR_DEVICES="${GPU_MONITOR_DEVICES:-all}"
+# How often (seconds) to print latest CSV line to log; default 15
+export GPU_MONITOR_LOG_INTERVAL="${GPU_MONITOR_LOG_INTERVAL:-15}"
 
 # 解析 "--" 后的命令
 CMD=()
@@ -79,9 +90,9 @@ trap 'cleanup' EXIT
 
 # 启动监控（若无可用的 nvidia-smi 会静默跳过）
 if command -v nvidia-smi &>/dev/null; then
-    ./moniter.sh all 5 &
+    ./moniter.sh "$GPU_MONITOR_DEVICES" "$GPU_MONITOR_INTERVAL" &
     MONITOR_PID=$!
-    echo "[GPU Monitor] Started moniter.sh (PID $MONITOR_PID), sampling every 5s; log prints latest line every 15s."
+    echo "[GPU Monitor] Started moniter.sh (PID $MONITOR_PID), interval=${GPU_MONITOR_INTERVAL}s, devices=$GPU_MONITOR_DEVICES; log prints latest line every ${GPU_MONITOR_LOG_INTERVAL}s."
     # 可选：同时启动网页仪表盘（本地设 GPU_MONITOR_SERVE_DASHBOARD=1；CI 不设则跳过）
     if [[ -n "${GPU_MONITOR_SERVE_DASHBOARD:-}" ]] && command -v python3 &>/dev/null; then
         sleep 2
@@ -94,11 +105,11 @@ else
     echo "[GPU Monitor] nvidia-smi not found; skipping GPU monitor."
 fi
 
-# 后台：每 15s 将最新一行 CSV 打印到 stdout，便于在 CI 日志中实时查看
+# 后台：每 GPU_MONITOR_LOG_INTERVAL 秒将最新一行 CSV 打印到 stdout，便于在 CI 日志中实时查看
 (
     sleep 10
     while true; do
-        sleep 15
+        sleep "$GPU_MONITOR_LOG_INTERVAL"
         RID_FILE="$GPU_MONITOR_DATA_ROOT/current_run_id"
         [[ -f "$RID_FILE" ]] || continue
         RUN_ID=$(cat "$RID_FILE" 2>/dev/null)
