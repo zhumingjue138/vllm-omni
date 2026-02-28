@@ -54,14 +54,6 @@ bash tests/e2e/online_serving/L5/gpu_monitor.sh run -- pytest -s -v tests/e2e/on
 - 仪表盘 URL 会打印在终端，默认 `http://127.0.0.1:8765/gpu_dashboard.html`。远程机器上在本机执行 `ssh -L 8765:127.0.0.1:8765 用户@主机` 后访问该 URL。
 - 打包目录：`tests/e2e/online_serving/L5/gpu_monitor_data/gpu_monitor_bundle_<run_id>/`，内含 `gpu_metrics.csv`、`report.html`、`README.txt`。折线图在 `report.html` 中；日志结束时会打印路径（如 `Line chart: open in browser: .../report.html`）。
 
-### 可选：用 conftest 集成（不经过 wrapper 脚本）
-
-GPU 监控的 pytest 逻辑在 `tests/e2e/online_serving/L5/conftest.py`，由上层 `online_serving/conftest.py` 按路径加载。设置 `GPU_MONITOR=1` 后直接跑 pytest，会在 session 开始时启动 `gpu_monitor.sh start`，session 结束时自动 finalize 并（在 CI 中）上传 artifact。环境变量 `GPU_MONITOR_INTERVAL`、`GPU_MONITOR_DEVICES`、`GPU_MONITOR_LOG_INTERVAL` 等同样生效；仪表盘需单独开 `gpu_monitor.sh serve` 或继续用 `run` 并设 `GPU_MONITOR_SERVE_DASHBOARD=1`。
-
-```bash
-GPU_MONITOR=1 GPU_MONITOR_INTERVAL=60 pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_sleep_001
-```
-
 ## 流程概览
 
 1. **启动监控**：后台运行 `./gpu_monitor.sh start`（在 L5 目录下），整个长稳期间持续写 CSV。
