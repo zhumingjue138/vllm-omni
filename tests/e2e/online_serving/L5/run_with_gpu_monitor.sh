@@ -18,8 +18,8 @@
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 仓库根目录（脚本在 tests/e2e/online_serving/ 下）
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# 仓库根目录（脚本在 tests/e2e/online_serving/L5/ 下）
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 cd "$SCRIPT_DIR"
 export GPU_MONITOR_DATA_ROOT="${GPU_MONITOR_DATA_ROOT:-$SCRIPT_DIR/gpu_monitor_data}"
 export SKIP_DEPS_CHECK="${SKIP_DEPS_CHECK:-1}"

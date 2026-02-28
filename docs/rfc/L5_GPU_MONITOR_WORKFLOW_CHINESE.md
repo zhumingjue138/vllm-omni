@@ -63,11 +63,11 @@ finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
 
 ### 2.2 关键组件
 
-- `tests/e2e/online_serving/moniter.sh`：按间隔调用 `nvidia-smi`，输出 CSV、history.jsonl、latest.json（若有 jq）。
-- `tests/e2e/online_serving/run_with_gpu_monitor.sh`：统一入口；后台启动 moniter、执行用户命令、退出时 finalize；在 CI 中上传 bundle 为 artifacts；本地可选启动仪表盘。
-- `tests/e2e/online_serving/finalize_monitor.sh`：根据 current_run_id 拷贝 CSV、调用 generate_report.py、写 README.txt、打印 GPU_MONITOR_BUNDLE_DIR。
-- `tests/e2e/online_serving/generate_report.py`：从 CSV 生成 report.html（统计表、折线图、异常表）；X 轴为真实时间戳（如 02-27 11:38:07）；支持「按 GPU 拆分」视图。
-- `tests/e2e/online_serving/serve_dashboard.sh` + `gpu_dashboard.html`：本地实时仪表盘；CI 不依赖。
+- `tests/e2e/online_serving/L5/moniter.sh`：按间隔调用 `nvidia-smi`，输出 CSV、history.jsonl、latest.json（若有 jq）。
+- `tests/e2e/online_serving/L5/run_with_gpu_monitor.sh`：统一入口；后台启动 moniter、执行用户命令、退出时 finalize；在 CI 中上传 bundle 为 artifacts；本地可选启动仪表盘。
+- `tests/e2e/online_serving/L5/finalize_monitor.sh`：根据 current_run_id 拷贝 CSV、调用 generate_report.py、写 README.txt、打印 GPU_MONITOR_BUNDLE_DIR。
+- `tests/e2e/online_serving/L5/generate_report.py`：从 CSV 生成 report.html（统计表、折线图、异常表）；X 轴为真实时间戳（如 02-27 11:38:07）；支持「按 GPU 拆分」视图。
+- `tests/e2e/online_serving/L5/serve_dashboard.sh` + `gpu_dashboard.html`：本地实时仪表盘；CI 不依赖。
 - `.buildkite/test-L5.yml`：L5 步骤：执行带监控的测试，由 wrapper 上传 report.html、gpu_metrics.csv、README.txt 为 artifacts。
 - `.buildkite/pipeline.yml`：当 `L5=1` 时上传 test-L5.yml，从而执行 L5 步骤。
 
@@ -93,7 +93,7 @@ finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
 
 - `moniter.sh`、`run_with_gpu_monitor.sh`、`finalize_monitor.sh`、`generate_report.py`、`serve_dashboard.sh`、`gpu_dashboard.html` 的实现与本地验证。
 - `.buildkite/test-L5.yml` 与 `pipeline.yml` 中 `L5=1` 触发逻辑；CI 上验证「跑测试 + 上传 artifact」。
-- 文档：`tests/e2e/online_serving/GPU_MONITOR_CI.md`（本地与 CI 用法、artifact 下载与查看）。
+- 文档：`tests/e2e/online_serving/L5/GPU_MONITOR_CI.md`（本地与 CI 用法、artifact 下载与查看）。
 
 ### P1（后续 / 其他 RFC）
 
@@ -114,4 +114,4 @@ finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
 ## 5 参考
 
 - [RFC #1220](https://github.com/vllm-project/vllm-omni/issues/1220)：L4 tests workflow & daily email notifications（结构与动机参考）。
-- `tests/e2e/online_serving/GPU_MONITOR_CI.md`：本地与 CI 使用说明。
+- `tests/e2e/online_serving/L5/GPU_MONITOR_CI.md`：本地与 CI 使用说明。
