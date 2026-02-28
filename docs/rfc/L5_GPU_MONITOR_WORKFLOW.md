@@ -51,12 +51,12 @@ Two phases: **Sample → Bundle** (and in CI, the wrapper uploads the bundle as 
 Test run (local or CI)
        │
        ▼
-run_with_gpu_monitor.sh ──► moniter.sh (CSV + latest.json)
+gpu_monitor.sh run ──► gpu_monitor.sh start (CSV + latest.json)
        │                           │
-       │                           └──► serve_dashboard.sh (optional, local only)
+       │                           └──► gpu_monitor.sh serve (optional, local only)
        │
        ▼ (on exit)
-finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
+gpu_monitor.sh finalize ──► generate_report.py ──► report.html + bundle
        │
        └── CI: buildkite-agent artifact upload (report.html, gpu_metrics.csv, README.txt)
 ```
@@ -65,11 +65,9 @@ finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
 
 | Component | Role |
 |-----------|------|
-| `tests/e2e/online_serving/L5/moniter.sh` | Background sampler: `nvidia-smi` at interval (default 5s), write CSV + history.jsonl + latest.json. |
-| `tests/e2e/online_serving/L5/run_with_gpu_monitor.sh` | Wrapper: start moniter (and optionally serve_dashboard), run user command, on exit run finalize and upload artifacts if buildkite-agent present. |
-| `tests/e2e/online_serving/L5/finalize_monitor.sh` | Copy current run CSV into bundle dir, call generate_report.py, write README.txt; print GPU_MONITOR_BUNDLE_DIR. |
+| `tests/e2e/online_serving/L5/gpu_monitor.sh` | Single script: `start` = background nvidia-smi (CSV + latest.json); `finalize` = bundle + report; `serve` = dashboard HTTP server; `run` = start → command → finalize (+ CI upload). |
 | `tests/e2e/online_serving/L5/generate_report.py` | Read CSV → statistics, time-series per GPU, anomalies → single HTML (Chart.js) with table, line chart, anomaly table. |
-| `tests/e2e/online_serving/L5/serve_dashboard.sh` | HTTP server for gpu_dashboard.html + /api/latest (for live view; local only). |
+| `tests/e2e/online_serving/L5/gpu_dashboard.html` | Live dashboard (served by `gpu_monitor.sh serve`; local only). |
 | `.buildkite/test-L5.yml` | One step (or more): run test with run_with_gpu_monitor.sh, which uploads report.html, gpu_metrics.csv, README.txt as artifacts. |
 | `.buildkite/pipeline.yml` | When `L5=1`, upload test-L5.yml so the L5 step(s) run. |
 
@@ -81,11 +79,11 @@ finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
 
 **Secondary: Local long-run + report only**
 
-- On a Linux host with NVIDIA GPUs, run `L5/run_with_gpu_monitor.sh -- pytest ...`. Bundle is written under `tests/e2e/online_serving/L5/gpu_monitor_data/gpu_monitor_bundle_<run_id>/`. Open report.html locally.
+- On a Linux host with NVIDIA GPUs, run `L5/gpu_monitor.sh run -- pytest ...`. Bundle is written under `tests/e2e/online_serving/L5/gpu_monitor_data/gpu_monitor_bundle_<run_id>/`. Open report.html locally.
 
 **Optional: Local real-time dashboard**
 
-- Set `GPU_MONITOR_SERVE_DASHBOARD=1` when calling the wrapper, or run `serve_dashboard.sh` in a second terminal. Browser opens gpu_dashboard.html; data is read from latest.json. Not used in CI.
+- Set `GPU_MONITOR_SERVE_DASHBOARD=1` when calling the wrapper, or run `gpu_monitor.sh serve` in a second terminal. Browser opens gpu_dashboard.html; data is read from latest.json. Not used in CI.
 
 ---
 
@@ -95,13 +93,11 @@ finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
 
 | Item | Action | Notes |
 |------|--------|------|
-| Monitor script | `moniter.sh`: nvidia-smi loop, CSV + optional latest.json | SKIP_DEPS_CHECK for CI without jq |
-| Wrapper | `run_with_gpu_monitor.sh`: start monitor, run command, finalize, upload artifacts | Same command for local and CI |
-| Finalize | `finalize_monitor.sh`: bundle CSV, call generate_report.py, README | |
+| Monitor / wrapper | `gpu_monitor.sh` (start / finalize / serve / run) | Same for local and CI; SKIP_DEPS_CHECK for CI without jq |
 | Report generator | `generate_report.py`: stats, line chart (real timestamps), anomalies, “split per GPU” toggle | X-axis: e.g. MM-DD HH:MM:SS |
-| Dashboard (local) | `serve_dashboard.sh` + gpu_dashboard.html | Optional; not used in CI |
+| Dashboard (local) | `gpu_monitor.sh serve` + gpu_dashboard.html | Optional; not used in CI |
 | CI pipeline | `.buildkite/test-L5.yml` (run test + upload artifacts); `pipeline.yml` uploads it when `L5=1` | Artifacts: report.html, gpu_metrics.csv, README.txt |
-| Docs | `tests/e2e/online_serving/L5/GPU_MONITOR_CI.md` | Local vs CI, Buildkite artifact download |
+| Docs | `tests/e2e/online_serving/L5/README.md` | Local vs CI, Buildkite artifact download |
 
 ### P1 (Later / other RFCs)
 
@@ -124,4 +120,4 @@ finalize_monitor.sh ──► generate_report.py ──► report.html + bundle
 ## 5 References
 
 - [RFC #1220](https://github.com/vllm-project/vllm-omni/issues/1220): L4 tests workflow building & daily email notifications (design template and motivation).
-- `tests/e2e/online_serving/L5/GPU_MONITOR_CI.md`: Usage for CI and local runs.
+- `tests/e2e/online_serving/L5/README.md`: Usage for CI and local runs.

@@ -3,8 +3,8 @@
 """
 L5 GPU memory monitor pytest integration.
 
-Set env GPU_MONITOR=1 to start moniter.sh for the session, then finalize
-and upload artifacts on exit. Loaded when running tests under
+Set env GPU_MONITOR=1 to start gpu_monitor.sh start for the session, then
+finalize and upload artifacts on exit. Loaded when running tests under
 tests/e2e/online_serving/ (via parent conftest import).
 
   GPU_MONITOR=1 pytest tests/e2e/online_serving/test_foo.py -v
@@ -83,8 +83,9 @@ def pytest_sessionstart(session):
     env = _gpu_monitor_env()
     dev = env["GPU_MONITOR_DEVICES"]
     interval = env["GPU_MONITOR_INTERVAL"]
+    gpu_monitor_sh = L5_DIR / "gpu_monitor.sh"
     _monitor_process = subprocess.Popen(
-        [str(L5_DIR / "moniter.sh"), dev, interval],
+        [str(gpu_monitor_sh), "start", dev, interval],
         cwd=str(L5_DIR),
         env=env,
         stdout=subprocess.DEVNULL,
@@ -92,7 +93,7 @@ def pytest_sessionstart(session):
     )
     log_interval = env["GPU_MONITOR_LOG_INTERVAL"]
     print(
-        f"[GPU Monitor] Started moniter.sh (PID {_monitor_process.pid}), "
+        f"[GPU Monitor] Started gpu_monitor.sh start (PID {_monitor_process.pid}), "
         f"interval={interval}s, devices={dev}; log every {log_interval}s.",
         flush=True,
     )
@@ -101,7 +102,7 @@ def pytest_sessionstart(session):
 
 
 def _gpu_monitor_finalize_and_upload():
-    """Stop monitor, run finalize_monitor.sh, upload artifacts if in CI."""
+    """Stop monitor, run gpu_monitor.sh finalize, upload artifacts if in CI."""
     global _monitor_process
     if _monitor_process is None:
         return
@@ -122,14 +123,14 @@ def _gpu_monitor_finalize_and_upload():
         return
     print("--- Finalizing: bundling GPU monitor data ---", flush=True)
     result = subprocess.run(
-        [str(L5_DIR / "finalize_monitor.sh")],
+        [str(L5_DIR / "gpu_monitor.sh"), "finalize"],
         cwd=str(L5_DIR),
         env=env,
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        print(result.stderr or result.stdout or "finalize_monitor.sh failed", flush=True)
+        print(result.stderr or result.stdout or "gpu_monitor.sh finalize failed", flush=True)
         return
     print(result.stdout, flush=True)
     bundle_dir = None
