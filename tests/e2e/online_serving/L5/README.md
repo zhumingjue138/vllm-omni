@@ -35,8 +35,20 @@
 # CI 或本地仅要日志 + 结束后 report.html
 bash tests/e2e/online_serving/L5/gpu_monitor.sh run -- pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_text_to_text_async_chunk_003 -v
 
+# 改环境变量：先 export，再执行命令
+export GPU_MONITOR_INTERVAL=60
+bash tests/e2e/online_serving/L5/gpu_monitor.sh run -- pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_sleep_001
+
+# 多个环境变量示例：采样间隔 60s、只监控 GPU 0,1、日志每 30s 打一行、并开仪表盘
+export GPU_MONITOR_INTERVAL=60
+export GPU_MONITOR_DEVICES=0,1
+export GPU_MONITOR_LOG_INTERVAL=30
+export GPU_MONITOR_SERVE_DASHBOARD=1
+bash tests/e2e/online_serving/L5/gpu_monitor.sh run -- pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_sleep_001
+
 # 本地想边跑边看仪表盘（一步，无需另开终端）
-GPU_MONITOR_SERVE_DASHBOARD=1 bash tests/e2e/online_serving/L5/gpu_monitor.sh run -- pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_text_to_text_async_chunk_003 -v
+export GPU_MONITOR_SERVE_DASHBOARD=1
+bash tests/e2e/online_serving/L5/gpu_monitor.sh run -- pytest -s -v tests/e2e/online_serving/test_qwen3_omni_full.py -k test_text_to_text_async_chunk_003 -v
 ```
 
 - 仪表盘 URL 会打印在终端，默认 `http://127.0.0.1:8765/gpu_dashboard.html`。远程机器上在本机执行 `ssh -L 8765:127.0.0.1:8765 用户@主机` 后访问该 URL。
