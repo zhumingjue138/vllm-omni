@@ -6,6 +6,7 @@ from the CSV produced by `resource_monitor.sh`.
 This is used to generate an archivable report in CI after a long-running stability
 test so that the report remains available even after environment cleanup.
 """
+
 from __future__ import annotations
 
 import csv
@@ -127,10 +128,7 @@ def render_html(
     """
     times, gpu_series = build_series_by_gpu(rows)
     # X-axis time, e.g. 02-27 11:38:07 (local timezone), which is easier to read for long stability runs.
-    labels_js = [
-        f'"{datetime.fromtimestamp(t).strftime("%m-%d %H:%M:%S")}"'
-        for t in times
-    ]
+    labels_js = [f'"{datetime.fromtimestamp(t).strftime("%m-%d %H:%M:%S")}"' for t in times]
     datasets_js = []
     colors = ["#e94560", "#0f3460", "#533483", "#16c79a"]
     for i, (gpu, series) in enumerate(sorted(gpu_series.items())):

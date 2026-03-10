@@ -15,6 +15,7 @@ All test-specific parameters, such as `duration_sec`, `request_rate` /
 `tests/e2e/stability/tests/stability_test.json` and are no longer overridden
 through environment variables.
 """
+
 import json
 import os
 import threading
@@ -169,9 +170,12 @@ def _run_one_benchmark_batch(
         flow = request_rate
     else:
         args = base + [
-            "--max-concurrency", str(max_concurrency),
-            "--num-prompts", str(num_prompts),
-            "--request-rate", "inf",
+            "--max-concurrency",
+            str(max_concurrency),
+            "--num-prompts",
+            str(num_prompts),
+            "--request-rate",
+            "inf",
         ]
         flow = max_concurrency
 

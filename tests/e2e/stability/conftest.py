@@ -4,6 +4,7 @@ resource monitoring is started before each test and finalized after each test,
 so each stability test case gets its own HTML report (one report per case).
 No need to wrap pytest with `bash resource_monitor.sh run -- pytest ...`.
 """
+
 import os
 import subprocess
 import sys
@@ -33,15 +34,9 @@ def _start_resource_monitor():
         try:
             proc.wait(timeout=2)
             if proc.returncode != 0:
-                stderr = (
-                    proc.stderr.read().decode("utf-8", errors="ignore")
-                    if proc.stderr
-                    else ""
-                )
+                stderr = proc.stderr.read().decode("utf-8", errors="ignore") if proc.stderr else ""
                 if stderr.strip():
-                    sys.stderr.write(
-                        f"[Stability] Resource monitor failed to start: {stderr.strip()}\n"
-                    )
+                    sys.stderr.write(f"[Stability] Resource monitor failed to start: {stderr.strip()}\n")
                 return None
         except subprocess.TimeoutExpired:
             pass
@@ -51,9 +46,7 @@ def _start_resource_monitor():
 
 
 def _get_monitor_data_root() -> Path:
-    data_root = os.environ.get("RESOURCE_MONITOR_DATA_ROOT") or os.environ.get(
-        "GPU_MONITOR_DATA_ROOT"
-    )
+    data_root = os.environ.get("RESOURCE_MONITOR_DATA_ROOT") or os.environ.get("GPU_MONITOR_DATA_ROOT")
     if data_root:
         return Path(data_root)
     return STABILITY_DIR / "gpu_monitor_data"
@@ -77,9 +70,7 @@ def _wait_for_run_dir(timeout_sec: int = 10) -> Path | None:
 def _report_latest_gpu_samples(stop_event: threading.Event) -> None:
     """Periodically print the latest sampled GPU line."""
     log_interval = int(
-        os.environ.get("RESOURCE_MONITOR_LOG_INTERVAL")
-        or os.environ.get("GPU_MONITOR_LOG_INTERVAL")
-        or "15"
+        os.environ.get("RESOURCE_MONITOR_LOG_INTERVAL") or os.environ.get("GPU_MONITOR_LOG_INTERVAL") or "15"
     )
     log_interval = max(log_interval, 1)
     last_line = ""
@@ -123,9 +114,7 @@ def _finalize_resource_monitor() -> str | None:
         if result.returncode != 0:
             return None
         for line in (result.stdout or "").splitlines():
-            if line.startswith("GPU_MONITOR_BUNDLE_DIR=") or line.startswith(
-                "RESOURCE_MONITOR_BUNDLE_DIR="
-            ):
+            if line.startswith("GPU_MONITOR_BUNDLE_DIR=") or line.startswith("RESOURCE_MONITOR_BUNDLE_DIR="):
                 _, _, value = line.partition("=")
                 return value.strip() if value else None
         return None
@@ -154,13 +143,9 @@ def stability_resource_monitor_per_test(request: pytest.FixtureRequest):
         run_dir = _wait_for_run_dir(timeout_sec=5)
         node_name = request.node.name
         if run_dir is not None:
-            sys.stderr.write(
-                f"[Stability] Resource monitor started for test: {node_name} | run dir: {run_dir}\n"
-            )
+            sys.stderr.write(f"[Stability] Resource monitor started for test: {node_name} | run dir: {run_dir}\n")
         else:
-            sys.stderr.write(
-                f"[Stability] Resource monitor started for test: {node_name} (run dir not ready yet)\n"
-            )
+            sys.stderr.write(f"[Stability] Resource monitor started for test: {node_name} (run dir not ready yet)\n")
 
     yield
 
@@ -179,10 +164,6 @@ def stability_resource_monitor_per_test(request: pytest.FixtureRequest):
         bundle_dir = _finalize_resource_monitor()
         node_name = request.node.name
         if bundle_dir:
-            sys.stderr.write(
-                f"[Stability] Report for test «{node_name}»: {bundle_dir}/report.html\n"
-            )
+            sys.stderr.write(f"[Stability] Report for test «{node_name}»: {bundle_dir}/report.html\n")
         else:
-            sys.stderr.write(
-                f"[Stability] Finalize skipped or failed for test «{node_name}»\n"
-            )
+            sys.stderr.write(f"[Stability] Finalize skipped or failed for test «{node_name}»\n")
