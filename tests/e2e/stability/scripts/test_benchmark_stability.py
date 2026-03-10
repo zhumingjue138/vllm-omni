@@ -351,5 +351,5 @@ def test_benchmark_stability(omni_server, stability_benchmark_params):
         num_prompts_per_batch=num_prompts_per_batch,
     )
 
-    assert result.get("failed", 0) == 0, f"Failed requests detected: {result.get('errors', [])}"
-    assert result.get("completed", 0) > 0, "No requests completed"
+    assert result.get("failed", 0) == 0, f"[{test_name}] Failed requests detected: {result.get('errors', [])}"
+    assert result.get("completed", 0) > 0, f"[{test_name}] No requests completed"
