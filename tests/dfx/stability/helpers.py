@@ -471,11 +471,23 @@ def run_stability_benchmark_loop(
     start_time = time.perf_counter()
     batch_results: list[dict[str, Any]] = []
     batch_index = 0
+    print(
+        "[Stability] benchmark loop started: "
+        f"host={host}, port={port}, model={model}, duration_sec={duration_sec}, "
+        f"num_prompts_per_batch={num_prompts_per_batch}, request_rate={request_rate}, "
+        f"max_concurrency={max_concurrency}"
+    )
 
     while True:
-        if (time.perf_counter() - start_time) >= duration_sec:
+        elapsed_before_batch = time.perf_counter() - start_time
+        if elapsed_before_batch >= duration_sec:
             break
+        print(
+            "[Stability] batch dispatch: "
+            f"batch_index={batch_index}, elapsed={elapsed_before_batch:.2f}s/{float(duration_sec):.2f}s"
+        )
         sampled_params = _sample_stability_batch_params(params, batch_index)
+        batch_start = time.perf_counter()
         result = run_one_batch(
             host,
             port,
@@ -487,7 +499,14 @@ def run_stability_benchmark_loop(
             result_dir,
             batch_index,
         )
+        batch_elapsed = time.perf_counter() - batch_start
         batch_results.append(result)
+        print(
+            "[Stability] batch done: "
+            f"batch_index={batch_index}, duration={batch_elapsed:.2f}s, "
+            f"completed={result.get('completed', 0)}, failed={result.get('failed', 0)}, "
+            f"errors={len(result.get('errors') or [])}"
+        )
         batch_index += 1
         if (time.perf_counter() - start_time) >= duration_sec:
             break

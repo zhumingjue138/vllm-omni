@@ -1,7 +1,9 @@
 import json
 import os
 import re
+import shlex
 import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -373,15 +375,75 @@ def run_benchmark(
             result_filename,
         ]
     )
+    command_preview = shlex.join(command)
+    print(f"[Benchmark] launching: {command_preview}")
     process = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, universal_newlines=True
     )
+    print(f"[Benchmark] pid={process.pid}, result_filename={result_filename}")
+    print("[Benchmark] stream_mode=serial(stdout->stderr)")
+
+    stdout_line_count = 0
+    stderr_line_count = 0
+    start_wait = time.perf_counter()
+    heartbeat_interval = max(int(os.environ.get("BENCHMARK_SERIAL_HEARTBEAT_SEC", "15")), 1)
+    heartbeat_stop = threading.Event()
+    progress_stalled_since = start_wait
+
+    def _watch_serial_progress() -> None:
+        nonlocal progress_stalled_since
+        last_stdout = stdout_line_count
+        last_stderr = stderr_line_count
+        while not heartbeat_stop.wait(heartbeat_interval):
+            now = time.perf_counter()
+            elapsed = now - start_wait
+            if stdout_line_count == last_stdout and stderr_line_count == last_stderr:
+                stalled_for = now - progress_stalled_since
+                print(
+                    "[Benchmark] serial-read waiting... "
+                    f"elapsed={elapsed:.1f}s, stdout_lines={stdout_line_count}, "
+                    f"stderr_lines={stderr_line_count}, stalled_for={stalled_for:.1f}s, "
+                    f"returncode={process.poll()}"
+                )
+            else:
+                progress_stalled_since = now
+                print(
+                    "[Benchmark] serial-read progress... "
+                    f"elapsed={elapsed:.1f}s, stdout_lines={stdout_line_count}, "
+                    f"stderr_lines={stderr_line_count}, returncode={process.poll()}"
+                )
+            last_stdout = stdout_line_count
+            last_stderr = stderr_line_count
+
+    heartbeat_thread = threading.Thread(target=_watch_serial_progress, daemon=True)
+    heartbeat_thread.start()
 
     for line in iter(process.stdout.readline, ""):
-        print(line, end=" ")
+        stdout_line_count += 1
+        progress_stalled_since = time.perf_counter()
+        print(f"[stdout] {line}", end="" if line.endswith("\n") else "\n")
+
+    if process.stdout is not None:
+        process.stdout.close()
+    print("[Benchmark] stdout stream closed, start draining stderr")
 
     for line in iter(process.stderr.readline, ""):
-        print(line, end=" ")
+        stderr_line_count += 1
+        progress_stalled_since = time.perf_counter()
+        print(f"[stderr] {line}", end="" if line.endswith("\n") else "\n")
+
+    if process.stderr is not None:
+        process.stderr.close()
+    process.wait()
+    heartbeat_stop.set()
+    heartbeat_thread.join(timeout=2)
+
+    elapsed = time.perf_counter() - start_wait
+    print(
+        "[Benchmark] process finished: "
+        f"returncode={process.returncode}, elapsed={elapsed:.2f}s, "
+        f"stdout_lines={stdout_line_count}, stderr_lines={stderr_line_count}"
+    )
 
     if "--result-dir" in command:
         index = command.index("--result-dir")
@@ -390,6 +452,16 @@ def run_benchmark(
         result_dir = "./"
 
     result_path = os.path.join(result_dir, result_filename)
+    if process.returncode not in (0, None):
+        raise RuntimeError(
+            "Benchmark subprocess failed before result parsing: "
+            f"returncode={process.returncode}, result_path={result_path}, command={command_preview}"
+        )
+    if not os.path.exists(result_path):
+        raise FileNotFoundError(
+            "Benchmark result file not found after subprocess exit: "
+            f"result_path={result_path}, command={command_preview}"
+        )
     with open(result_path, encoding="utf-8") as f:
         result = json.load(f)
 
