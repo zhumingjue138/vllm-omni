@@ -273,3 +273,7 @@ tests/.ci_generated/
 
 # Local Lance precision-matching dump scripts (not part of the repo)
 lance_compare/
+
+# sglang docker image tar (only upload 90M split parts)
+sglang-tar/sglang-latest.tar
+sglang-tar/.write_test
