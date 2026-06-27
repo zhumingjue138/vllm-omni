@@ -575,15 +575,14 @@ async def omni_run_server_worker(listen_address, sock, args, client_config=None,
             **uvicorn_kwargs,
         )
 
-    # NB: Await server shutdown only after the backend context is exited
-    try:
-        await shutdown_task
-    finally:
-        state = getattr(app, "state", None)
-        serving_speech = getattr(state, "openai_serving_speech", None) if state is not None else None
-        if serving_speech is not None:
-            serving_speech.shutdown()
-        sock.close()
+        try:
+            await shutdown_task
+        finally:
+            state = getattr(app, "state", None)
+            serving_speech = getattr(state, "openai_serving_speech", None) if state is not None else None
+            if serving_speech is not None:
+                serving_speech.shutdown()
+            sock.close()
 
 
 @asynccontextmanager
@@ -1318,7 +1317,10 @@ async def create_speech_batch(request: BatchSpeechRequest, raw_request: Request)
         result = await handler.create_speech_batch(request)
         if isinstance(result, ErrorResponse):
             return _error_response_to_json_response(result)
-        return JSONResponse(content=result.model_dump())
+        # exclude_none so optional per-item fields are omitted rather than
+        # serialized as null: errored items drop `usage`/`audio_data`/`media_type`,
+        # successful items drop `error`. Matches the documented batch response shape.
+        return JSONResponse(content=result.model_dump(exclude_none=True))
     except (EngineGenerateError, EngineDeadError) as exc:
         return _create_engine_error_json_response(raw_request, exc)
     except ValueError as e:
