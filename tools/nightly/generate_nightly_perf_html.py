@@ -19,6 +19,8 @@ from benchmarks.diffusion.backends import normalize_endpoint
 LOGGER = logging.getLogger(__name__)
 
 _RESULT_JSON_PREFIX = "result_test_"
+_OMNI_WRAPPED_RESULT_PREFIX = "omni_result_"
+_OMNI_JSON_PREFIXES = (_RESULT_JSON_PREFIX, _OMNI_WRAPPED_RESULT_PREFIX)
 _DIFFUSION_JSON_PREFIXES = ("diffusion_perf_", "diffusion_result_")
 DEFAULT_INPUT_DIR = os.getenv("DEFAULT_INPUT_DIR") or "tests"
 DEFAULT_OUTPUT_DIR = os.getenv("DEFAULT_OUTPUT_DIR") or "tests"
@@ -69,12 +71,18 @@ def _load_json_file(path: str) -> dict[str, Any] | list[Any] | None:
 
 
 def _parse_from_filename(filename: str) -> dict[str, Any]:
-    """Parse ``result_test_*.json`` filenames; same rules as ``generate_nightly_perf_excel``."""
+    """Parse ``result_test_*.json`` / ``omni_result_*.json`` filenames; same rules as excel."""
     name, ext = os.path.splitext(filename)
-    if ext != ".json" or not name.startswith(_RESULT_JSON_PREFIX):
+    prefix: str | None = None
+    if ext == ".json":
+        if name.startswith(_OMNI_WRAPPED_RESULT_PREFIX):
+            prefix = _OMNI_WRAPPED_RESULT_PREFIX
+        elif name.startswith(_RESULT_JSON_PREFIX):
+            prefix = _RESULT_JSON_PREFIX
+    if prefix is None:
         return {}
 
-    core = name[len(_RESULT_JSON_PREFIX) :]
+    core = name[len(prefix) :]
     parts = core.split("_")
     if len(parts) < 5:
         LOGGER.warning(
@@ -133,13 +141,81 @@ def _parse_from_filename(filename: str) -> dict[str, Any]:
     return parsed
 
 
+def _parse_omni_session_from_filename(filename: str) -> dict[str, Any]:
+    name, ext = os.path.splitext(filename)
+    if ext != ".json" or not name.startswith(_OMNI_WRAPPED_RESULT_PREFIX):
+        return {}
+    core = name[len(_OMNI_WRAPPED_RESULT_PREFIX) :]
+    parts = core.split("_")
+    if len(parts) < 2:
+        return {}
+    timestamp = parts[-1]
+    parsed: dict[str, Any] = {}
+    if len(timestamp) >= 15:
+        parsed["date"] = timestamp
+    return parsed
+
+
+def _process_omni_record(record: dict[str, Any]) -> dict[str, Any]:
+    if "result" not in record:
+        return record
+
+    flat = dict(record)
+    metrics = flat.pop("result", {})
+    if isinstance(metrics, dict):
+        flat.update(metrics)
+
+    benchmark_params = flat.get("benchmark_params")
+    if isinstance(benchmark_params, dict):
+        for key in ("num_prompts", "max_concurrency", "request_rate", "dataset_name", "baseline"):
+            if key in benchmark_params and flat.get(key) in (None, ""):
+                flat[key] = benchmark_params[key]
+
+    if flat.get("timestamp") and not flat.get("date"):
+        flat["date"] = flat["timestamp"]
+    if flat.get("endpoint") and not flat.get("endpoint_type"):
+        flat["endpoint_type"] = flat["endpoint"]
+        flat.setdefault("backend", flat["endpoint"])
+
+    server_params = flat.pop("server_params", None)
+    if isinstance(server_params, dict):
+        flat.setdefault("model_id", server_params.get("model"))
+        flat.setdefault("tokenizer_id", server_params.get("model"))
+
+    flat.pop("benchmark_params", None)
+    return flat
+
+
+def _finalize_omni_record(
+    record: dict[str, Any],
+    basename: str,
+    filename_meta: dict[str, Any],
+) -> dict[str, Any]:
+    if "date" not in record or not record["date"]:
+        record["date"] = filename_meta.get("date") or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    if "num_prompts" not in record or record["num_prompts"] is None:
+        if "num_prompts" in filename_meta:
+            record["num_prompts"] = filename_meta["num_prompts"]
+    if "max_concurrency" not in record or record["max_concurrency"] is None:
+        if "max_concurrency" in filename_meta:
+            record["max_concurrency"] = filename_meta["max_concurrency"]
+    if "test_name" not in record or not record.get("test_name"):
+        if "test_name" in filename_meta:
+            record["test_name"] = filename_meta["test_name"]
+    if "dataset_name" not in record or not record.get("dataset_name"):
+        if "dataset_name" in filename_meta:
+            record["dataset_name"] = filename_meta["dataset_name"]
+    record["source_file"] = basename
+    return record
+
+
 def _iter_omni_json_records(input_dir: str) -> Iterable[dict[str, Any]]:
     if not os.path.isdir(input_dir):
         LOGGER.warning("input dir '%s' does not exist or is not a directory", input_dir)
         return
 
     for entry in sorted(os.listdir(input_dir)):
-        if not entry.endswith(".json") or not entry.startswith(_RESULT_JSON_PREFIX):
+        if not entry.endswith(".json") or not entry.startswith(_OMNI_JSON_PREFIXES):
             continue
         full_path = os.path.join(input_dir, entry)
         if not os.path.isfile(full_path):
@@ -148,26 +224,22 @@ def _iter_omni_json_records(input_dir: str) -> Iterable[dict[str, Any]]:
         if data is None:
             continue
 
-        record: dict[str, Any] = dict(data)
-        filename_meta = _parse_from_filename(os.path.basename(full_path))
-        if "date" not in record or not record["date"]:
-            record["date"] = filename_meta.get("date") or datetime.now(
-                timezone.utc,
-            ).strftime("%Y%m%d-%H%M%S")
-        if "num_prompts" not in record or record["num_prompts"] is None:
-            if "num_prompts" in filename_meta:
-                record["num_prompts"] = filename_meta["num_prompts"]
-        if "max_concurrency" not in record or record["max_concurrency"] is None:
-            if "max_concurrency" in filename_meta:
-                record["max_concurrency"] = filename_meta["max_concurrency"]
-        if "test_name" not in record or not record.get("test_name"):
-            if "test_name" in filename_meta:
-                record["test_name"] = filename_meta["test_name"]
-        if "dataset_name" not in record or not record.get("dataset_name"):
-            if "dataset_name" in filename_meta:
-                record["dataset_name"] = filename_meta["dataset_name"]
-        record["source_file"] = os.path.basename(full_path)
-        yield record
+        basename = os.path.basename(full_path)
+        if basename.startswith(_OMNI_WRAPPED_RESULT_PREFIX) and isinstance(data, list):
+            filename_meta = _parse_omni_session_from_filename(basename)
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                yield _finalize_omni_record(_process_omni_record(dict(item)), basename, filename_meta)
+            continue
+
+        if not isinstance(data, dict):
+            continue
+        yield _finalize_omni_record(
+            _process_omni_record(dict(data)),
+            basename,
+            _parse_from_filename(basename),
+        )
 
 
 def _parse_diffusion_from_filename(filename: str) -> dict[str, Any]:

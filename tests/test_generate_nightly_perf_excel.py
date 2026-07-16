@@ -33,7 +33,20 @@ def test_generate_excel_report_with_perf_templates(tmp_path: Path):
     omni_template_path = perf_scripts_dir / "result_omni_template.json"
     diffusion_template_path = perf_scripts_dir / "diffusion_result_template.json"
 
-    omni_record = json.loads(omni_template_path.read_text(encoding="utf-8"))
+    omni_raw_template = json.loads(omni_template_path.read_text(encoding="utf-8"))
+    omni_record = {
+        "test_name": "test_perf",
+        "endpoint": "/v1/chat/completions",
+        "timestamp": "20260415-185642",
+        "server_params": {"model": "Qwen/Qwen3-Omni-30B-A3B-Instruct"},
+        "benchmark_params": {
+            "dataset_name": "random",
+            "num_prompts": 4,
+            "max_concurrency": 1,
+            "baseline": omni_raw_template.get("baseline", {}),
+        },
+        "result": {key: value for key, value in omni_raw_template.items() if key != "baseline"},
+    }
     diffusion_records = json.loads(diffusion_template_path.read_text(encoding="utf-8"))
     diffusion_records[0]["endpoint"] = "/v1/videos"
     diffusion_records[0]["result"]["endpoint"] = "/v1/videos"
@@ -44,9 +57,9 @@ def test_generate_excel_report_with_perf_templates(tmp_path: Path):
     diffusion_input_dir.mkdir()
 
     # Keep file names compatible with parser conventions in generate_nightly_perf_excel.py
-    omni_result_file = input_dir / "result_test_perf_random_1_4_in2500_out900_20260415-185642.json"
+    omni_result_file = input_dir / "omni_result_test_perf_20260415-185642.json"
     diffusion_result_file = diffusion_input_dir / "diffusion_result_qwen_image_edit_20260415-193200.json"
-    omni_result_file.write_text(json.dumps(omni_record, ensure_ascii=False, indent=2), encoding="utf-8")
+    omni_result_file.write_text(json.dumps([omni_record], ensure_ascii=False, indent=2), encoding="utf-8")
     diffusion_result_file.write_text(json.dumps(diffusion_records, ensure_ascii=False, indent=2), encoding="utf-8")
 
     output_file = tmp_path / "nightly_perf.xlsx"
@@ -66,7 +79,7 @@ def test_generate_excel_report_with_perf_templates(tmp_path: Path):
 
     ws_omni_raw = wb["omni_raw"]
     baseline_cell = _cell_value_by_header(ws_omni_raw, "baseline")
-    assert baseline_cell == json.dumps(omni_record["baseline"], ensure_ascii=False, sort_keys=True)
+    assert baseline_cell == json.dumps(omni_record["benchmark_params"]["baseline"], ensure_ascii=False, sort_keys=True)
 
     ws_omni_summary = wb["omni_summary"]
     assert _cell_value_by_header(ws_omni_summary, "commit_sha") == "test_commit_sha"
