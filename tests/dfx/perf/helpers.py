@@ -426,7 +426,16 @@ def run_omni_benchmark(
     ri = safe_filename_token(random_input_len)
     ro = safe_filename_token(random_output_len)
     raw_result_filename = f"result_{test_name}_{dataset_name}_{flow}_{num_prompt}_in{ri}_out{ro}_{timestamp}.json"
-    bench_result_dir = os.environ.get("BENCHMARK_DIR", "tests")
+
+    if session is not None:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="omni_bench_tmp_", delete=False) as tmp:
+            raw_result_path = Path(tmp.name)
+        bench_result_dir = str(raw_result_path.parent)
+        bench_result_filename = raw_result_path.name
+    else:
+        bench_result_dir = os.environ.get("BENCHMARK_DIR", "tests")
+        bench_result_filename = raw_result_filename
+        raw_result_path = Path(bench_result_dir) / bench_result_filename
 
     command = (
         ["vllm", "bench", "serve", "--omni"]
@@ -438,40 +447,41 @@ def run_omni_benchmark(
             "--result-dir",
             bench_result_dir,
             "--result-filename",
-            raw_result_filename,
+            bench_result_filename,
         ]
     )
     run_subprocess_with_log(command, cwd=REPO_ROOT)
 
-    raw_result_path = Path(bench_result_dir) / raw_result_filename
-    raw_result = read_metrics_or_template(raw_result_path, result_template_path)
-    metrics = _extract_omni_raw_metrics(
-        raw_result,
-        random_input_len=random_input_len,
-        random_output_len=random_output_len,
-    )
+    try:
+        raw_result = read_metrics_or_template(raw_result_path, result_template_path)
+        metrics = _extract_omni_raw_metrics(
+            raw_result,
+            random_input_len=random_input_len,
+            random_output_len=random_output_len,
+        )
 
-    if session is not None:
-        assert server_params is not None
-        assert benchmark_params is not None
-        resolved_endpoint = endpoint or resolve_omni_benchmark_endpoint(benchmark_params)
-        record = build_omni_report_record(
-            test_name=test_name,
-            endpoint=resolved_endpoint,
-            timestamp=timestamp,
-            server_params=server_params,
-            benchmark_params=benchmark_params,
-            metrics=metrics,
-        )
-        if session.aggregated_result_file is None:
-            raise ValueError("OmniBenchmarkSession.aggregated_result_file must be set for perf runs")
-        append_to_aggregated_file(
-            record,
-            aggregated_result_file=session.aggregated_result_file,
-            result_lock=session.result_lock,
-        )
-        print(f"\n  Result appended to: {session.aggregated_result_file}")
-    else:
+        if session is not None:
+            assert server_params is not None
+            assert benchmark_params is not None
+            resolved_endpoint = endpoint or resolve_omni_benchmark_endpoint(benchmark_params)
+            record = build_omni_report_record(
+                test_name=test_name,
+                endpoint=resolved_endpoint,
+                timestamp=timestamp,
+                server_params=server_params,
+                benchmark_params=benchmark_params,
+                metrics=metrics,
+            )
+            if session.aggregated_result_file is None:
+                raise ValueError("OmniBenchmarkSession.aggregated_result_file must be set for perf runs")
+            append_to_aggregated_file(
+                record,
+                aggregated_result_file=session.aggregated_result_file,
+                result_lock=session.result_lock,
+            )
+            print(f"\n  Result appended to: {session.aggregated_result_file}")
+            return metrics
+
         # Legacy flat JSON for stability and other non-perf callers.
         legacy_result = dict(metrics)
         if baseline_config:
@@ -485,8 +495,9 @@ def run_omni_benchmark(
             legacy_result["baseline"] = {}
         write_json_file(raw_result_path, legacy_result)
         return legacy_result
-
-    return metrics
+    finally:
+        if session is not None:
+            raw_result_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
