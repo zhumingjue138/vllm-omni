@@ -234,7 +234,24 @@ def build_omni_server_cli_args_from_tuple(
         server_args = ["--stage-overrides", stage_overrides] + server_args
     if extra_cli_args:
         server_args = list(extra_cli_args) + server_args
-    return server_args
+    return normalize_server_cli_args(server_args)
+
+
+def normalize_repo_relative_path(path: str) -> str:
+    """Normalize legacy ``../vllm_omni/...`` paths for repo-root subprocess cwd."""
+    if path.startswith("../vllm_omni/"):
+        return path[3:]
+    return path
+
+
+def normalize_server_cli_args(args: list[str]) -> list[str]:
+    """Fix deploy-config paths in a flat CLI arg list."""
+    normalized = list(args)
+    deploy_flags = {"--deploy-config", "--deploy_config"}
+    for i, arg in enumerate(normalized):
+        if arg in deploy_flags and i + 1 < len(normalized):
+            normalized[i + 1] = normalize_repo_relative_path(normalized[i + 1])
+    return normalized
 
 
 def build_omni_server_cli_args_from_diffusion_cfg(
@@ -243,7 +260,7 @@ def build_omni_server_cli_args_from_diffusion_cfg(
     timeout_args: list[str] | None = DEFAULT_OMNI_SERVER_TIMEOUT_ARGS,
 ) -> list[str]:
     """Build ``OmniServer`` CLI args from diffusion runner server config dict."""
-    serve_args = list(server_cfg["serve_args"])
+    serve_args = normalize_server_cli_args(list(server_cfg["serve_args"]))
     if timeout_args:
         return list(timeout_args) + serve_args
     return serve_args

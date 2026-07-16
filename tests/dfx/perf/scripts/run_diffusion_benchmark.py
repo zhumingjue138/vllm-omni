@@ -37,6 +37,7 @@ from tests.dfx.perf.helpers import (
     assert_diffusion_benchmark_result,
     build_omni_server_cli_args_from_diffusion_cfg,
     iter_diffusion_sweep_runs,
+    normalize_repo_relative_path,
     resolve_benchmark_endpoint,
     run_diffusion_benchmark,
 )
@@ -193,7 +194,10 @@ def _build_serve_args(serve_args_dict: dict[str, Any]) -> list[str]:
         elif isinstance(value, dict):
             args.extend([flag, json.dumps(value, separators=(",", ":"))])
         else:
-            args.extend([flag, str(value)])
+            str_value = str(value)
+            if key in {"deploy-config", "deploy_config"}:
+                str_value = normalize_repo_relative_path(str_value)
+            args.extend([flag, str_value])
     return args
 
 
