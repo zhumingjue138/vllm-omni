@@ -15,14 +15,12 @@ from typing import Any, Protocol
 import pytest
 import torch
 
-from tests.dfx.conftest import (
-    assert_fault_exception,
-    create_reliability_omni_server_params,
-    resolve_oom_device_spec,
-)
 from tests.dfx.reliability.helpers import (
     FaultInjector,
+    PROCESS_KILL_ERROR_KEYWORDS,
+    assert_fault_exception,
     assert_no_server_tree_process_residual_and_gpu_release,
+    assert_post_fault_health_terminal,
     extract_openai_error_contract_from_bytes,
     get_health_raw,
     inject_gpu_oom,
@@ -31,34 +29,34 @@ from tests.dfx.reliability.helpers import (
     make_server_tree_kill_fault_injector,
     post_chat_completions_raw,
     post_json_raw,
+    resolve_oom_device_spec,
     run_fault_injection_with_rate_load,
     stop_gpu_oom_hogs,
     worker_residual_timeout_after_kill_signal,
 )
 from tests.helpers.mark import hardware_test
 from tests.helpers.media import generate_synthetic_audio, generate_synthetic_image, generate_synthetic_video
-from tests.helpers.runtime import dummy_messages_from_mix_data
-
-RELIABILITY_SCENARIOS: list[dict[str, Any]] = [
-    {
-        "test_name": "qwen3_omni_reliability_async_chunk",
-        "server_params": {
-            "model": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
-            "stage_config_name": "qwen3_omni_moe.yaml",
-            "server_args": ["--async-chunk"],
-        },
-    },
-    {
-        "test_name": "qwen3_omni_reliability_default",
-        "server_params": {
-            "model": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
-            "stage_config_name": "qwen3_omni_moe.yaml",
-            "server_args": ["--no-async-chunk"],
-        },
-    },
-]
+from tests.helpers.runtime import OmniServerParams, dummy_messages_from_mix_data
+from vllm_omni.platforms import current_omni_platform
 
 DEPLOY_CONFIGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "vllm_omni" / "deploy"
+_QWEN3_STAGE_CONFIG_PATH = (
+    str(DEPLOY_CONFIGS_DIR / "xpu" / "qwen3_omni_ci.yaml")
+    if current_omni_platform.is_xpu()
+    else str(DEPLOY_CONFIGS_DIR / "qwen3_omni_moe.yaml")
+)
+QWEN_PARAMS = [
+    OmniServerParams(
+        model="Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        stage_config_path=_QWEN3_STAGE_CONFIG_PATH,
+        server_args=["--async-chunk"],
+    ),
+    OmniServerParams(
+        model="Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        stage_config_path=_QWEN3_STAGE_CONFIG_PATH,
+        server_args=["--no-async-chunk"],
+    ),
+]
 
 
 def _default_oom_device_spec() -> str:
@@ -100,17 +98,6 @@ FAULT_ERROR_KEYWORDS = (
     "orchestrator",
     "timeout",
     "connection",
-    "500",
-    "503",
-)
-PROCESS_KILL_ERROR_KEYWORDS = (
-    "timeout",
-    "did not complete within",
-    "connection",
-    "engine",
-    "orchestrator",
-    "dead",
-    "internal",
     "500",
     "503",
 )
@@ -297,25 +284,6 @@ def _assert_post_fault_chat_fast_fail(host: str, port: int, *, model: str, scena
     except Exception:  # noqa: BLE001
         elapsed = time.monotonic() - start
         assert elapsed < 15, f"[{scenario} fast_fail] exception was too slow after fault: {elapsed:.2f}s"
-
-
-def _assert_post_fault_health_terminal(host: str, port: int, *, scenario: str) -> None:
-    deadline = time.monotonic() + 20.0
-    last_observation = ""
-    while time.monotonic() < deadline:
-        try:
-            status, body = get_health_raw(host, port, timeout_sec=5)
-            last_observation = f"http={status}, body={body[:200]!r}"
-            if status == 503:
-                return
-        except Exception as exc:  # noqa: BLE001
-            last_observation = f"exception={exc!r}"
-            return
-        time.sleep(0.5)
-    pytest.fail(f"[{scenario} health] no terminal post-fault health observed: {last_observation}")
-
-
-QWEN_PARAMS = create_reliability_omni_server_params(RELIABILITY_SCENARIOS, DEPLOY_CONFIGS_DIR)
 
 
 @pytest.mark.slow
@@ -648,7 +616,7 @@ def test_reliability_fault_process_kill_worker_with_load_request_failure(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_chat_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
 
 
 @pytest.mark.slow
@@ -667,7 +635,7 @@ def test_reliability_fault_process_kill_serve_root_no_load_fast_fail_and_cleanup
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_chat_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -701,7 +669,7 @@ def test_reliability_fault_process_kill_serve_root_with_load_fast_fail_and_clean
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_chat_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -728,7 +696,7 @@ def test_reliability_fault_process_kill_tree_no_load_fast_fail_and_cleanup(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_chat_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -765,7 +733,7 @@ def test_reliability_fault_process_kill_tree_with_load_fast_fail_and_cleanup(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_chat_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,

@@ -14,14 +14,12 @@ from typing import Any
 
 import pytest
 
-from tests.dfx.conftest import (
-    assert_fault_exception,
-    create_reliability_omni_server_params,
-    resolve_oom_device_spec,
-)
 from tests.dfx.reliability.helpers import (
     FaultInjector,
+    PROCESS_KILL_ERROR_KEYWORDS,
+    assert_fault_exception,
     assert_no_server_tree_process_residual_and_gpu_release,
+    assert_post_fault_health_terminal,
     extract_openai_error_contract_from_bytes,
     get_health_raw,
     inject_gpu_oom,
@@ -29,25 +27,22 @@ from tests.dfx.reliability.helpers import (
     make_server_root_kill_fault_injector,
     make_server_tree_kill_fault_injector,
     post_json_raw,
+    resolve_oom_device_spec,
     run_fault_injection_with_rate_load,
     stop_gpu_oom_hogs,
     worker_residual_timeout_after_kill_signal,
 )
 from tests.helpers.mark import hardware_test
 from tests.helpers.media import load_test_audio_data_url
-from tests.helpers.runtime import OpenAIClientHandler
-
-RELIABILITY_SCENARIOS: list[dict[str, Any]] = [
-    {
-        "test_name": "voxcpm2_reliability_default",
-        "server_params": {
-            "model": "openbmb/VoxCPM2",
-            "stage_config_name": "voxcpm2.yaml",
-        },
-    },
-]
+from tests.helpers.runtime import OmniServerParams, OpenAIClientHandler
 
 DEPLOY_CONFIGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "vllm_omni" / "deploy"
+VOXCPM2_PARAMS = [
+    OmniServerParams(
+        model="openbmb/VoxCPM2",
+        stage_config_path=str(DEPLOY_CONFIGS_DIR / "voxcpm2.yaml"),
+    ),
+]
 OOM_INJECTION_CONFIG = {
     "target_mem_ratio": 0.96,
     "hold_seconds": 0,
@@ -62,17 +57,6 @@ FAULT_ERROR_KEYWORDS = (
     "orchestrator",
     "timeout",
     "connection",
-    "500",
-    "503",
-)
-PROCESS_KILL_ERROR_KEYWORDS = (
-    "timeout",
-    "did not complete within",
-    "connection",
-    "engine",
-    "orchestrator",
-    "dead",
-    "internal",
     "500",
     "503",
 )
@@ -116,7 +100,6 @@ WORKER_SIGNAL_FAULT_PARAMS = [
     ),
 ]
 
-VOXCPM2_PARAMS = create_reliability_omni_server_params(RELIABILITY_SCENARIOS, DEPLOY_CONFIGS_DIR)
 INFLIGHT_INJECTION_REQUEST_RATE = 0.3
 INFLIGHT_INJECTION_REQUEST_COUNT = 10
 _SPEECH_FF_HTTP_TIMEOUT_SEC = 30
@@ -175,20 +158,6 @@ def _assert_post_fault_speech_fast_fail(host: str, port: int, *, model: str, sce
         assert elapsed < 15, f"[{scenario} fast_fail] exception was too slow after fault: {elapsed:.2f}s"
 
 
-def _assert_post_fault_health_terminal(host: str, port: int, *, scenario: str) -> None:
-    deadline = time.monotonic() + 20.0
-    last_observation = ""
-    while time.monotonic() < deadline:
-        try:
-            status, body = get_health_raw(host, port, timeout_sec=5)
-            last_observation = f"http={status}, body={body[:200]!r}"
-            if status == 503:
-                return
-        except Exception as exc:  # noqa: BLE001
-            last_observation = f"exception={exc!r}"
-            return
-        time.sleep(0.5)
-    pytest.fail(f"[{scenario} health] no terminal post-fault health observed: {last_observation}")
 
 
 @pytest.mark.slow
@@ -380,7 +349,7 @@ def test_reliability_fault_process_kill_worker_with_load_request_failure(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_speech_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
 
 
 @pytest.mark.slow
@@ -399,7 +368,7 @@ def test_reliability_fault_process_kill_serve_root_no_load_fast_fail_and_cleanup
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_speech_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -433,7 +402,7 @@ def test_reliability_fault_process_kill_serve_root_with_load_fast_fail_and_clean
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_speech_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -460,7 +429,7 @@ def test_reliability_fault_process_kill_tree_no_load_fast_fail_and_cleanup(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_speech_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -497,7 +466,7 @@ def test_reliability_fault_process_kill_tree_with_load_fast_fail_and_cleanup(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_speech_fast_fail(host, port, model=omni_server_function.model, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,

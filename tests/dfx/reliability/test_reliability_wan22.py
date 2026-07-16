@@ -7,43 +7,35 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import time
-from pathlib import Path
 from typing import Any
 
 import pytest
 import requests
 
-from tests.dfx.conftest import (
-    assert_fault_exception,
-    create_reliability_omni_server_params,
-    resolve_oom_device_spec,
-    supports_video_generation,
-)
 from tests.dfx.reliability.helpers import (
     FaultInjector,
+    PROCESS_KILL_ERROR_KEYWORDS,
+    assert_fault_exception,
     assert_no_server_tree_process_residual_and_gpu_release,
+    assert_post_fault_health_terminal,
     get_health_raw,
     inject_gpu_oom,
     make_process_kill_fault_injector,
     make_server_root_kill_fault_injector,
     make_server_tree_kill_fault_injector,
+    resolve_oom_device_spec,
     run_fault_injection_with_rate_load,
     stop_gpu_oom_hogs,
+    supports_video_generation,
     worker_residual_timeout_after_kill_signal,
 )
 from tests.helpers.mark import hardware_test
 from tests.helpers.media import generate_synthetic_image
+from tests.helpers.runtime import OmniServerParams
 
-RELIABILITY_SCENARIOS: list[dict[str, Any]] = [
-    {
-        "test_name": "wan22_i2v_reliability_default",
-        "server_params": {
-            "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-        },
-    }
+WAN_PARAMS = [
+    OmniServerParams(model="Wan-AI/Wan2.2-I2V-A14B-Diffusers"),
 ]
-
-E2E_STAGE_CONFIGS_DIR = Path(__file__).resolve().parent.parent / "e2e" / "stage_configs"
 OOM_INJECTION_CONFIG = {
     "target_mem_ratio": 0.95,
     "hold_seconds": 0,
@@ -58,17 +50,6 @@ FAULT_ERROR_KEYWORDS = (
     "unknown error",
     "internal server error",
     "500 server error",
-)
-PROCESS_KILL_ERROR_KEYWORDS = (
-    "timeout",
-    "did not complete within",
-    "connection",
-    "engine",
-    "orchestrator",
-    "dead",
-    "internal",
-    "500",
-    "503",
 )
 # RFC#2366 signal x target matrix (aligned with test_reliability_qwen3_omni.py):
 # - worker: SIGTERM, SIGKILL
@@ -110,7 +91,6 @@ WORKER_SIGNAL_FAULT_PARAMS = [
     ),
 ]
 
-WAN_PARAMS = create_reliability_omni_server_params(RELIABILITY_SCENARIOS, E2E_STAGE_CONFIGS_DIR)
 DIFFUSION_VIDEO_PARAMS = [param for param in WAN_PARAMS if supports_video_generation(param.model)]
 INFLIGHT_INJECTION_REQUEST_RATE = 0.3
 INFLIGHT_INJECTION_REQUEST_COUNT = 10
@@ -164,20 +144,6 @@ def _assert_post_fault_video_fast_fail(host: str, port: int, *, scenario: str) -
         assert elapsed < 15, f"[{scenario} fast_fail] exception was too slow after fault: {elapsed:.2f}s"
 
 
-def _assert_post_fault_health_terminal(host: str, port: int, *, scenario: str) -> None:
-    deadline = time.monotonic() + 20.0
-    last_observation = ""
-    while time.monotonic() < deadline:
-        try:
-            status, body = get_health_raw(host, port, timeout_sec=5)
-            last_observation = f"http={status}, body={body[:200]!r}"
-            if status == 503:
-                return
-        except Exception as exc:  # noqa: BLE001
-            last_observation = f"exception={exc!r}"
-            return
-        time.sleep(0.5)
-    pytest.fail(f"[{scenario} health] no terminal post-fault health observed: {last_observation}")
 
 
 @pytest.mark.slow
@@ -385,7 +351,7 @@ def test_reliability_fault_process_kill_worker_with_load_request_failure(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_video_fast_fail(host, port, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
 
 
 @pytest.mark.slow
@@ -536,7 +502,7 @@ def test_reliability_fault_process_kill_serve_root_with_load_fast_fail_and_clean
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_video_fast_fail(host, port, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -560,7 +526,7 @@ def test_reliability_fault_process_kill_serve_root_no_load_fast_fail_and_cleanup
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_video_fast_fail(host, port, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -587,7 +553,7 @@ def test_reliability_fault_process_kill_tree_no_load_fast_fail_and_cleanup(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_video_fast_fail(host, port, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,
@@ -625,7 +591,7 @@ def test_reliability_fault_process_kill_tree_with_load_fast_fail_and_cleanup(
     host = omni_server_function.host
     port = omni_server_function.port
     _assert_post_fault_video_fast_fail(host, port, scenario=scenario)
-    _assert_post_fault_health_terminal(host, port, scenario=scenario)
+    assert_post_fault_health_terminal(host, port, scenario=scenario)
     assert_no_server_tree_process_residual_and_gpu_release(
         omni_server_function,
         scenario=scenario,

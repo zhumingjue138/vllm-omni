@@ -18,6 +18,7 @@ import http.client
 import json
 import logging
 import os
+import re
 import select
 import shlex
 import signal
@@ -26,12 +27,25 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import psutil
 import pytest
 
 logger = logging.getLogger(__name__)
+
+PROCESS_KILL_ERROR_KEYWORDS: tuple[str, ...] = (
+    "timeout",
+    "did not complete within",
+    "connection",
+    "engine",
+    "orchestrator",
+    "dead",
+    "internal",
+    "500",
+    "503",
+)
 
 # Substrings matched against ``psutil.Process.name`` + argv text for classifying GPU
 # workers under the test server tree. Extend per-suite via
@@ -84,6 +98,55 @@ def get_health_raw(host: str, port: int, *, timeout_sec: int = 20) -> tuple[int,
         return resp.status, resp.read()
     finally:
         conn.close()
+
+
+def supports_video_generation(model_name: str) -> bool:
+    lower = model_name.lower()
+    return any(key in lower for key in ("wan", "video", "i2v", "t2v"))
+
+
+def _parse_stage_devices(stage_config_path: str) -> str:
+    text = Path(stage_config_path).read_text(encoding="utf-8")
+    raw_devices: list[str] = re.findall(r"^\s*devices:\s*\"?([0-9,\s]+)\"?\s*$", text, flags=re.MULTILINE)
+    devices: set[int] = set()
+    for item in raw_devices:
+        for token in item.split(","):
+            token = token.strip()
+            if token:
+                devices.add(int(token))
+    if not devices:
+        raise ValueError(f"No runtime.devices found in stage config: {stage_config_path}")
+    return ",".join(str(x) for x in sorted(devices))
+
+
+def resolve_oom_device_spec(config: dict[str, Any], stage_config_path: str | None) -> str:
+    explicit = config.get("device")
+    if explicit is not None:
+        return str(explicit)
+    if not stage_config_path:
+        return "0"
+    return _parse_stage_devices(stage_config_path)
+
+
+def assert_fault_exception(exc: Exception, error_keywords: tuple[str, ...]) -> None:
+    text = str(exc).lower()
+    assert any(key in text for key in error_keywords), f"unexpected error under fault injection: {exc}"
+
+
+def assert_post_fault_health_terminal(host: str, port: int, *, scenario: str) -> None:
+    deadline = time.monotonic() + 20.0
+    last_observation = ""
+    while time.monotonic() < deadline:
+        try:
+            status, body = get_health_raw(host, port, timeout_sec=5)
+            last_observation = f"http={status}, body={body[:200]!r}"
+            if status == 503:
+                return
+        except Exception as exc:  # noqa: BLE001
+            last_observation = f"exception={exc!r}"
+            return
+        time.sleep(0.5)
+    pytest.fail(f"[{scenario} health] no terminal post-fault health observed: {last_observation}")
 
 
 def post_json_raw_http_client(
