@@ -165,6 +165,12 @@ def estimate_teacache_coefficients(
     x = np.array(input_diffs, dtype=np.float64)
     y = np.array(output_diffs, dtype=np.float64)
 
+    if len(x) == 0:
+        raise ValueError(
+            "Insufficient data for coefficient estimation: no step-to-step diffs. "
+            "Each trajectory must contain at least two steps."
+        )
+
     print("Data statistics:")
     print(f"  Count: {len(x)}")
     print(f"  Input Diffs (x): min={x.min():.4e}, max={x.max():.4e}, mean={x.mean():.4e}")

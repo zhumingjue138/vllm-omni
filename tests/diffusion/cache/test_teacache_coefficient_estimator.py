@@ -47,10 +47,10 @@ class TestEstimateTeacacheCoefficients:
         assert len(coeffs) == 3
         assert all(isinstance(c, float) for c in coeffs)
 
-    def test_skips_single_step_trajectory(self):
+    def test_rejects_single_step_trajectory(self):
         collected = [self._trajectory([1.0])]
-        coeffs = estimate_teacache_coefficients(collected, poly_order=1)
-        assert coeffs == pytest.approx([0.0, 0.0])
+        with pytest.raises(ValueError, match="Insufficient data"):
+            estimate_teacache_coefficients(collected, poly_order=1)
 
 
 class TestDataCollectionHook:

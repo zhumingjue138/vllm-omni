@@ -37,6 +37,10 @@ class TestMotGemmConfigHelpers:
     def test_get_device_name_a800_alias(self, _mock_device):
         assert mot_gemm.get_device_name() == "A100"
 
+    @patch("vllm_omni.diffusion.layers.mot.ops.mot_gemm.torch.cuda.get_device_name", return_value="NVIDIA H800-SXM5")
+    def test_get_device_name_h800_alias_strips_variant_suffix(self, _mock_device):
+        assert mot_gemm.get_device_name() == "H100"
+
     def test_get_mot_default_config_small_m(self):
         cfg = mot_gemm.get_mot_default_config(M=8, N=128, K=64)
         assert cfg["BLOCK_SIZE_M"] == 16

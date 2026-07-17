@@ -58,6 +58,13 @@ try:
     )
 except ImportError:
     IOEngine = None
+    BackendType = None
+    EngineDesc = None
+    IOEngineConfig = None
+    MemoryDesc = None
+    PollCqMode = None
+    RdmaBackendConfig = None
+    XgmiBackendConfig = None
 
 # Supported backend types for Mori. Kept as string constants so configuration
 # (YAML / CLI / dict) stays transport-agnostic. ``rdma`` uses NIC-based RDMA

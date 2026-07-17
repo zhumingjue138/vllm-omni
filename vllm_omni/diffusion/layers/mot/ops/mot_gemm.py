@@ -40,11 +40,10 @@ def get_device_name() -> str:
         "A800": "A100",
         "H800": "H100",
     }
-    # map A800/H800 to A100/H100 for chinese market
+    # map A800/H800 to A100/H100 for chinese market (ignore variant suffixes)
     for key, target in alias_map.items():
         if key in name:
-            name = name.replace(key, target)
-            break
+            return target
     return name
 
 
