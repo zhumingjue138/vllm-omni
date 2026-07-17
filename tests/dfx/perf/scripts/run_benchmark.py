@@ -8,11 +8,11 @@ from typing import Any
 import pytest
 
 from tests.dfx.conftest import (
-    create_benchmark_indices,
+    create_paired_omni_benchmark_pytest_params,
     create_test_parameter_mapping,
-    create_unique_server_params,
     get_benchmark_params_for_server,
-    load_configs,
+    is_diffusion_perf_config,
+    load_benchmark_configs,
 )
 from tests.dfx.perf.helpers import (
     OmniBenchmarkSession,
@@ -45,28 +45,29 @@ def _get_config_file_from_argv() -> str | None:
 
 
 _PERF_TESTS_DIR = Path(__file__).resolve().parent.parent / "tests"
-_DEFAULT_CONFIG_FILE = str(_PERF_TESTS_DIR / "test_qwen_omni.json")
 
 CONFIG_FILE_PATH = _get_config_file_from_argv()
 if CONFIG_FILE_PATH is None:
+    _all_configs = load_benchmark_configs(config_dir=_PERF_TESTS_DIR)
+    BENCHMARK_CONFIGS = [cfg for cfg in _all_configs if not is_diffusion_perf_config(cfg)]
     print(
-        "No --test-config-file in argv, using default: tests/dfx/perf/tests/test_qwen_omni.json "
-        "(override with e.g. --test-config-file tests/dfx/perf/tests/test_tts.json)"
+        f"No --test-config-file: loaded {len(BENCHMARK_CONFIGS)} omni/tts case(s) from "
+        f"{_PERF_TESTS_DIR}/*.json (skipped {len(_all_configs) - len(BENCHMARK_CONFIGS)} diffusion; "
+        f"use -m to filter, e.g. -m tts)"
     )
-    CONFIG_FILE_PATH = _DEFAULT_CONFIG_FILE
+else:
+    BENCHMARK_CONFIGS = load_benchmark_configs(CONFIG_FILE_PATH)
 
-_config_stem = Path(CONFIG_FILE_PATH).stem
+_config_stem = Path(CONFIG_FILE_PATH).stem if CONFIG_FILE_PATH else "bulk"
 AGGREGATED_RESULT_FILE = OMNI_BENCHMARK_RESULT_DIR / f"omni_result_{_config_stem}_{_SESSION_TIMESTAMP}.json"
 OMNI_BENCHMARK_SESSION = OmniBenchmarkSession(
     result_dir=OMNI_BENCHMARK_RESULT_DIR,
     aggregated_result_file=AGGREGATED_RESULT_FILE,
 )
 
-BENCHMARK_CONFIGS = load_configs(CONFIG_FILE_PATH)
-
 DEPLOY_CONFIGS_DIR = Path(__file__).parent.parent / "deploy"
-test_params = create_unique_server_params(BENCHMARK_CONFIGS, DEPLOY_CONFIGS_DIR)
 server_to_benchmark_mapping = create_test_parameter_mapping(BENCHMARK_CONFIGS)
+paired_benchmark_params = create_paired_omni_benchmark_pytest_params(BENCHMARK_CONFIGS, DEPLOY_CONFIGS_DIR)
 
 _omni_server_lock = threading.Lock()
 
@@ -140,16 +141,10 @@ def omni_server(request):
         print("OmniServer stopped")
 
 
-benchmark_indices = create_benchmark_indices(BENCHMARK_CONFIGS, server_to_benchmark_mapping)
-
-
 @pytest.fixture
-def benchmark_params(request, omni_server):
-    """Benchmark parameters fixture with proper parametrization."""
+def benchmark_params(request):
+    """Benchmark parameters fixture; paired with ``omni_server`` via parametrization."""
     test_name, param_index = request.param
-
-    if test_name != omni_server.test_name:
-        pytest.skip(f"Skipping parameter for {test_name} - current server is {omni_server.test_name}")
 
     all_params = get_benchmark_params_for_server(test_name, server_to_benchmark_mapping)
 
@@ -170,8 +165,11 @@ def benchmark_params(request, omni_server):
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("omni_server", test_params, indirect=True)
-@pytest.mark.parametrize("benchmark_params", benchmark_indices, indirect=True)
+@pytest.mark.parametrize(
+    "omni_server,benchmark_params",
+    paired_benchmark_params,
+    indirect=["omni_server", "benchmark_params"],
+)
 def test_performance_benchmark(omni_server, benchmark_params, request):
     test_name = benchmark_params["test_name"]
     params = benchmark_params["params"]

@@ -1,13 +1,184 @@
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.helpers.mark import hardware_marks
 from tests.helpers.stage_config import modify_stage_config
+from vllm_omni.platforms import current_omni_platform
 
 # Backward-compatible alias for stability and other omni DFX suites.
 from tests.dfx.perf.helpers import run_omni_benchmark as run_benchmark  # noqa: F401
+
+
+def _named_pytest_marks(names: list[str]) -> list[pytest.MarkDecorator]:
+    marks: list[pytest.MarkDecorator] = []
+    for name in names:
+        name = name.strip()
+        if not name:
+            raise ValueError("mark name must be a non-empty string")
+        marks.append(getattr(pytest.mark, name))
+    return marks
+
+
+def _hardware_marks_from_dict(hw: Any) -> list[pytest.MarkDecorator]:
+    if not isinstance(hw, dict):
+        raise ValueError(f"mark.hardware_marks must be a dict, got {type(hw).__name__}")
+    res = hw.get("res")
+    if not isinstance(res, dict):
+        raise ValueError(f"mark.hardware_marks.res must be a dict, got {type(res).__name__}")
+    num_cards = hw.get("num_cards", 1)
+    return list(hardware_marks(res=res, num_cards=num_cards))
+
+
+def resolve_pytest_marks(mark_field: Any) -> list[pytest.MarkDecorator]:
+    """Convert a JSON ``mark`` field into pytest mark decorators.
+
+    Supported form (per test-case object in perf/stability JSON)::
+
+        "mark": [
+            {"hardware_marks": {"res": {"cuda": "H100"}, "num_cards": 2}},
+            "full_model",
+            "diffusion"
+        ]
+
+    Exactly one ``hardware_marks`` object is required when ``mark`` is present.
+    ``hardware_marks`` delegates to :func:`tests.helpers.mark.hardware_marks`
+    (same shape as ``@hardware_test``). Additional array entries are registered
+    pytest marker names (strings).
+    """
+    if mark_field is None:
+        return []
+
+    if isinstance(mark_field, list):
+        marks: list[pytest.MarkDecorator] = []
+        hw_seen = False
+        for item in mark_field:
+            if isinstance(item, dict) and "hardware_marks" in item:
+                if hw_seen:
+                    raise ValueError("mark array must contain at most one hardware_marks object")
+                hw_seen = True
+                marks.extend(_hardware_marks_from_dict(item["hardware_marks"]))
+                unknown_keys = set(item) - {"hardware_marks"}
+                if unknown_keys:
+                    raise ValueError(
+                        f"mark hardware_marks object only allows hardware_marks; unknown keys: {sorted(unknown_keys)}"
+                    )
+            elif isinstance(item, str):
+                item = item.strip()
+                if not item:
+                    raise ValueError("mark name must be a non-empty string")
+                marks.extend(_named_pytest_marks([item]))
+            else:
+                raise ValueError(
+                    f"mark array entries must be hardware_marks objects or marker name strings; got {type(item).__name__}"
+                )
+        if not hw_seen:
+            raise ValueError("mark array must contain a hardware_marks object")
+        return marks
+
+    raise ValueError(f"mark must be a list; got {type(mark_field).__name__}")
+
+
+def _mark_names(mark_field: Any) -> set[str]:
+    if isinstance(mark_field, list):
+        return {str(item) for item in mark_field if isinstance(item, str)}
+    return set()
+
+
+def is_diffusion_perf_config(cfg: dict[str, Any]) -> bool:
+    """True for perf JSON cases intended for ``run_diffusion_benchmark.py``."""
+    if cfg.get("server_type") is not None:
+        return True
+    return "diffusion" in _mark_names(cfg.get("mark"))
+
+
+def _marks_by_test_name(configs: list[dict[str, Any]]) -> dict[str, list[pytest.MarkDecorator]]:
+    return {str(cfg["test_name"]): resolve_pytest_marks(cfg.get("mark")) for cfg in configs}
+
+
+def create_unique_server_pytest_params(
+    configs: list[dict[str, Any]],
+    stage_configs_dir: Path,
+) -> list[Any]:
+    """Like :func:`create_unique_server_params`, but wrap each row in ``pytest.param`` with JSON marks."""
+    marks_by_name = _marks_by_test_name(configs)
+    return [
+        pytest.param(
+            row,
+            marks=marks_by_name.get(row[0], []),
+            id=row[0],
+        )
+        for row in create_unique_server_params(configs, stage_configs_dir)
+    ]
+
+
+def create_benchmark_pytest_params(
+    benchmark_configs: list[dict[str, Any]],
+    server_to_benchmark_mapping: dict[str, dict],
+) -> list[Any]:
+    """Like :func:`create_benchmark_indices`, but wrap each index in ``pytest.param`` with JSON marks."""
+    marks_by_name = _marks_by_test_name(benchmark_configs)
+    params: list[Any] = []
+    seen: set[str] = set()
+    for config in benchmark_configs:
+        test_name = config["test_name"]
+        if test_name in seen:
+            continue
+        seen.add(test_name)
+        params_list = get_benchmark_params_for_server(test_name, server_to_benchmark_mapping)
+        id_suffixes = _unique_benchmark_param_id_suffixes(params_list)
+        for idx, id_suffix in enumerate(id_suffixes):
+            params.append(
+                pytest.param(
+                    (test_name, idx),
+                    marks=marks_by_name.get(test_name, []),
+                    id=f"{test_name}-{id_suffix}",
+                )
+            )
+    return params
+
+
+def create_paired_benchmark_pytest_params(
+    server_entries: list[tuple[Any, str]],
+    params_by_test_name: dict[str, list[Any]],
+    marks_by_name: dict[str, list[pytest.MarkDecorator]],
+) -> list[Any]:
+    """One ``pytest.param`` per ``(server entry, benchmark index)`` pair.
+
+    Pass ``server_entry`` and ``(test_name, idx)`` as separate ``pytest.param``
+    arguments for ``@pytest.mark.parametrize("server_fixture,benchmark_params", ...)``.
+    """
+    pairs: list[Any] = []
+    for server_entry, test_name in server_entries:
+        params_list = params_by_test_name.get(test_name, [])
+        id_suffixes = _unique_benchmark_param_id_suffixes(params_list)
+        for idx, id_suffix in enumerate(id_suffixes):
+            pairs.append(
+                pytest.param(
+                    server_entry,
+                    (test_name, idx),
+                    marks=marks_by_name.get(test_name, []),
+                    id=f"{test_name}-{id_suffix}",
+                )
+            )
+    return pairs
+
+
+def create_paired_omni_benchmark_pytest_params(
+    configs: list[dict[str, Any]],
+    stage_configs_dir: Path,
+) -> list[Any]:
+    """Paired params for ``run_benchmark.py`` (omni/tts)."""
+    mapping = create_test_parameter_mapping(configs)
+    marks_by_name = _marks_by_test_name(configs)
+    server_entries = [(row, row[0]) for row in create_unique_server_params(configs, stage_configs_dir)]
+    params_by_test_name = {
+        test_name: get_benchmark_params_for_server(test_name, mapping) for _, test_name in server_entries
+    }
+    return create_paired_benchmark_pytest_params(server_entries, params_by_test_name, marks_by_name)
 
 
 def load_configs(config_path: str) -> list[dict[str, Any]]:
@@ -26,7 +197,30 @@ def load_configs(config_path: str) -> list[dict[str, Any]]:
         raise RuntimeError(f"Failed to load configuration file: {str(e)}")
 
 
-def _modify_stage(default_path: str, updates: dict[str, Any] | None, deletes: dict[str, Any] | None) -> str:
+def load_benchmark_configs(
+    config_path: str | None = None,
+    *,
+    config_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Load one benchmark JSON file, or merge all ``*.json`` under *config_dir*.
+
+    When *config_path* is omitted, every ``*.json`` in *config_dir* is loaded and
+    concatenated. Pytest ``-m`` expressions then select cases via each entry's
+    ``mark`` field (e.g. ``-m tts`` after bulk load).
+    """
+    if config_path is not None:
+        return load_configs(config_path)
+    if config_dir is None:
+        raise ValueError("load_benchmark_configs requires config_path or config_dir")
+    configs: list[dict[str, Any]] = []
+    for path in sorted(config_dir.glob("*.json")):
+        configs.extend(load_configs(str(path)))
+    if not configs:
+        raise ValueError(f"No benchmark JSON files found under {config_dir}")
+    return configs
+
+
+def modify_stage(default_path: str, updates: dict[str, Any] | None, deletes: dict[str, Any] | None) -> str:
     kwargs: dict[str, Any] = {}
     if updates is not None:
         kwargs["updates"] = updates
@@ -85,7 +279,7 @@ def create_unique_server_params(
             stage_config_path = str(stage_configs_dir / stage_config_name)
             delete = server_params.get("delete", None)
             update = server_params.get("update", None)
-            stage_config_path = _modify_stage(stage_config_path, update, delete)
+            stage_config_path = modify_stage(stage_config_path, update, delete)
         else:
             stage_config_path = None
 
@@ -150,6 +344,200 @@ def create_benchmark_indices(
                 indices.append((test_name, idx))
 
     return indices
+
+
+def _safe_filename_token(value: Any | None, *, default: str = "na") -> str:
+    """Make a single path segment safe for result filenames on common filesystems."""
+    if value is None:
+        return default
+    s = str(value).strip()
+    for bad in ("/", "\\", ":", "*", "?", '"', "<", ">", "|"):
+        s = s.replace(bad, "_")
+    return s if s else default
+
+
+def _benchmark_param_id_suffix(param: dict[str, Any], *, idx: int) -> str:
+    """Derive a readable pytest id suffix from one ``benchmark_params`` entry."""
+    name = param.get("name")
+    if isinstance(name, str) and name.strip():
+        return _safe_filename_token(name.strip())
+
+    parts: list[str] = []
+    for key in ("task", "eval_phase", "dataset_name", "dataset"):
+        value = param.get(key)
+        if value is None or value == "":
+            continue
+        token = _safe_filename_token(str(value))
+        if token != "na":
+            parts.append(token)
+    if parts:
+        return "_".join(parts)
+
+    return f"case{idx}"
+
+
+def _unique_benchmark_param_id_suffixes(params_list: list[dict[str, Any]]) -> list[str]:
+    """Return unique pytest id suffixes for a server's benchmark param list."""
+    raw = [_benchmark_param_id_suffix(param, idx=idx) for idx, param in enumerate(params_list)]
+    seen: dict[str, int] = {}
+    unique: list[str] = []
+    for suffix in raw:
+        count = seen.get(suffix, 0)
+        seen[suffix] = count + 1
+        if count == 0:
+            unique.append(suffix)
+        else:
+            unique.append(f"{suffix}_{count}")
+    return unique
+
+
+def extract_mark_resource_label(mark_field: Any) -> str:
+    """Return a filename-safe hardware label from ``mark.hardware_marks.res`` values.
+
+    Example: ``{"cuda": "H100"}`` -> ``"H100"``; multiple platforms join with ``-``.
+
+    Prefer :func:`get_runtime_resource_label` for perf result filenames so labels
+    reflect the machine that actually ran the benchmark.
+    """
+    if isinstance(mark_field, list):
+        for item in mark_field:
+            if isinstance(item, dict) and "hardware_marks" in item:
+                return extract_mark_resource_label(item)
+        return "na"
+    if not isinstance(mark_field, dict):
+        return "na"
+    hw = mark_field.get("hardware_marks")
+    if not isinstance(hw, dict):
+        return "na"
+    res = hw.get("res")
+    if not isinstance(res, dict) or not res:
+        return "na"
+    labels = [_safe_filename_token(value) for value in res.values()]
+    return "-".join(labels) if labels else "na"
+
+
+_KNOWN_RUNTIME_RESOURCE_TOKENS: tuple[str, ...] = (
+    "H100",
+    "H800",
+    "H200",
+    "H20",
+    "L40S",
+    "L40",
+    "L4",
+    "A100",
+    "A800",
+    "A10G",
+    "A10",
+    "A30",
+    "MI325",
+    "MI300",
+    "MI250",
+    "B60",
+    "S5000",
+    "910B4",
+    "910B",
+    "910",
+    "310P",
+    "A2",
+    "A3",
+)
+_RUNTIME_RESOURCE_LABEL: str | None = None
+
+
+def _normalize_runtime_device_label(raw: str) -> str:
+    """Map a platform device name to a short filename-safe resource token."""
+    if not raw or not str(raw).strip():
+        return "na"
+    upper = str(raw).upper()
+    for token in _KNOWN_RUNTIME_RESOURCE_TOKENS:
+        if token.upper() in upper:
+            return _safe_filename_token(token)
+    compact = re.sub(r"[^a-zA-Z0-9]+", "", str(raw))
+    for prefix in ("NVIDIA", "AMD", "ASCEND", "HUAWEI"):
+        if compact.upper().startswith(prefix):
+            compact = compact[len(prefix) :]
+            break
+    return _safe_filename_token(compact[:48]) if compact else "na"
+
+
+def _read_runtime_device_name(*, device_id: int = 0) -> str | None:
+    """Device name from the active Omni platform."""
+    if current_omni_platform.device_count() <= device_id:
+        return None
+    get_name = getattr(current_omni_platform, "get_device_name", None)
+    if not callable(get_name):
+        return None
+    raw = get_name(device_id)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def get_runtime_resource_label(*, device_id: int = 0, refresh: bool = False) -> str:
+    """Return a filename-safe hardware label detected on the running machine."""
+    global _RUNTIME_RESOURCE_LABEL
+    if not refresh and _RUNTIME_RESOURCE_LABEL is not None:
+        return _RUNTIME_RESOURCE_LABEL
+    raw = _read_runtime_device_name(device_id=device_id)
+    label = _normalize_runtime_device_label(raw) if raw else "na"
+    if not refresh:
+        _RUNTIME_RESOURCE_LABEL = label
+    return label
+
+
+_FILENAME_OMIT_RESOURCE_LABELS = frozenset({"H100"})
+
+
+def hardware_json_value(resource_label: str | None) -> str:
+    """Hardware token stored in perf result JSON (empty when unknown)."""
+    token = _safe_filename_token(resource_label)
+    return "" if token == "na" else token
+
+
+def resource_label_for_filename(resource_label: str | None) -> str:
+    """Hardware token embedded in result filenames (H100 omitted on default CI pool)."""
+    token = _safe_filename_token(resource_label)
+    if token in _FILENAME_OMIT_RESOURCE_LABELS:
+        return ""
+    return token
+
+
+def extract_configs_resource_label(configs: list[dict[str, Any]]) -> str:
+    """Return runtime hardware label for perf result filenames."""
+    del configs
+    return get_runtime_resource_label()
+
+
+def resolve_baseline_value(
+    baseline_raw: Any,
+    *,
+    sweep_index: int | None,
+    max_concurrency: Any = None,
+    request_rate: Any = None,
+) -> Any:
+    """Pick the baseline threshold for this sweep step."""
+    if baseline_raw is None:
+        return 100000
+    if isinstance(baseline_raw, dict):
+        if max_concurrency is not None:
+            for key in (max_concurrency, str(max_concurrency)):
+                if key in baseline_raw:
+                    return baseline_raw[key]
+        if request_rate is not None:
+            for key in (request_rate, str(request_rate)):
+                if key in baseline_raw:
+                    return baseline_raw[key]
+        raise KeyError(
+            f"baseline dict has no key for max_concurrency={max_concurrency!r} "
+            f"or request_rate={request_rate!r}; keys={list(baseline_raw.keys())!r}"
+        )
+    if isinstance(baseline_raw, (list, tuple)):
+        if sweep_index is None:
+            raise ValueError("list baseline requires sweep_index")
+        if not (0 <= sweep_index < len(baseline_raw)):
+            raise IndexError(f"baseline list len={len(baseline_raw)} has no index {sweep_index}")
+        return baseline_raw[sweep_index]
+    return baseline_raw
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
