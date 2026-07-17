@@ -59,7 +59,7 @@ else:
     BENCHMARK_CONFIGS = load_benchmark_configs(CONFIG_FILE_PATH)
 
 _config_stem = Path(CONFIG_FILE_PATH).stem if CONFIG_FILE_PATH else "bulk"
-AGGREGATED_RESULT_FILE = OMNI_BENCHMARK_RESULT_DIR / f"omni_result_{_config_stem}_{_SESSION_TIMESTAMP}.json"
+AGGREGATED_RESULT_FILE = OMNI_BENCHMARK_RESULT_DIR / f"result_{_config_stem}_{_SESSION_TIMESTAMP}.json"
 OMNI_BENCHMARK_SESSION = OmniBenchmarkSession(
     result_dir=OMNI_BENCHMARK_RESULT_DIR,
     aggregated_result_file=AGGREGATED_RESULT_FILE,

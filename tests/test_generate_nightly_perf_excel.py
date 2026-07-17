@@ -57,7 +57,7 @@ def test_generate_excel_report_with_perf_templates(tmp_path: Path):
     diffusion_input_dir.mkdir()
 
     # Keep file names compatible with parser conventions in generate_nightly_perf_excel.py
-    omni_result_file = input_dir / "omni_result_test_perf_20260415-185642.json"
+    omni_result_file = input_dir / "result_test_perf_20260415-185642.json"
     diffusion_result_file = diffusion_input_dir / "diffusion_result_qwen_image_edit_20260415-193200.json"
     omni_result_file.write_text(json.dumps([omni_record], ensure_ascii=False, indent=2), encoding="utf-8")
     diffusion_result_file.write_text(json.dumps(diffusion_records, ensure_ascii=False, indent=2), encoding="utf-8")

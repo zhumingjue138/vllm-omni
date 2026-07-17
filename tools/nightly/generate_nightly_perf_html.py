@@ -19,8 +19,9 @@ from benchmarks.diffusion.backends import normalize_endpoint
 LOGGER = logging.getLogger(__name__)
 
 _RESULT_JSON_PREFIX = "result_test_"
-_OMNI_WRAPPED_RESULT_PREFIX = "omni_result_"
-_OMNI_JSON_PREFIXES = (_RESULT_JSON_PREFIX, _OMNI_WRAPPED_RESULT_PREFIX)
+_OMNI_SESSION_PREFIX = "result_"
+_OMNI_LEGACY_SESSION_PREFIX = "omni_result_"
+_OMNI_JSON_PREFIXES = (_OMNI_SESSION_PREFIX, _OMNI_LEGACY_SESSION_PREFIX)
 _DIFFUSION_JSON_PREFIXES = ("diffusion_perf_", "diffusion_result_")
 DEFAULT_INPUT_DIR = os.getenv("DEFAULT_INPUT_DIR") or "tests"
 DEFAULT_OUTPUT_DIR = os.getenv("DEFAULT_OUTPUT_DIR") or "tests"
@@ -71,14 +72,11 @@ def _load_json_file(path: str) -> dict[str, Any] | list[Any] | None:
 
 
 def _parse_from_filename(filename: str) -> dict[str, Any]:
-    """Parse ``result_test_*.json`` / ``omni_result_*.json`` filenames; same rules as excel."""
+    """Parse ``result_test_*.json`` flat omni perf filenames; same rules as excel."""
     name, ext = os.path.splitext(filename)
     prefix: str | None = None
-    if ext == ".json":
-        if name.startswith(_OMNI_WRAPPED_RESULT_PREFIX):
-            prefix = _OMNI_WRAPPED_RESULT_PREFIX
-        elif name.startswith(_RESULT_JSON_PREFIX):
-            prefix = _RESULT_JSON_PREFIX
+    if ext == ".json" and name.startswith(_RESULT_JSON_PREFIX):
+        prefix = _RESULT_JSON_PREFIX
     if prefix is None:
         return {}
 
@@ -143,9 +141,14 @@ def _parse_from_filename(filename: str) -> dict[str, Any]:
 
 def _parse_omni_session_from_filename(filename: str) -> dict[str, Any]:
     name, ext = os.path.splitext(filename)
-    if ext != ".json" or not name.startswith(_OMNI_WRAPPED_RESULT_PREFIX):
+    if ext != ".json":
         return {}
-    core = name[len(_OMNI_WRAPPED_RESULT_PREFIX) :]
+    if name.startswith(_OMNI_LEGACY_SESSION_PREFIX):
+        core = name[len(_OMNI_LEGACY_SESSION_PREFIX) :]
+    elif name.startswith(_OMNI_SESSION_PREFIX):
+        core = name[len(_OMNI_SESSION_PREFIX) :]
+    else:
+        return {}
     parts = core.split("_")
     if len(parts) < 2:
         return {}
@@ -225,7 +228,9 @@ def _iter_omni_json_records(input_dir: str) -> Iterable[dict[str, Any]]:
             continue
 
         basename = os.path.basename(full_path)
-        if basename.startswith(_OMNI_WRAPPED_RESULT_PREFIX) and isinstance(data, list):
+        if isinstance(data, list) and (
+            basename.startswith(_OMNI_SESSION_PREFIX) or basename.startswith(_OMNI_LEGACY_SESSION_PREFIX)
+        ):
             filename_meta = _parse_omni_session_from_filename(basename)
             for item in data:
                 if not isinstance(item, dict):

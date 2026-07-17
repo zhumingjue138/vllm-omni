@@ -126,8 +126,9 @@ DATASET_NAME_ALLOWED = ("random", "random-mm")
 
 _COLUMNS_FILENAME = "nightly_perf_summary_columns.txt"
 _RESULT_JSON_PREFIX = "result_test_"
-_OMNI_WRAPPED_RESULT_PREFIX = "omni_result_"
-_OMNI_JSON_PREFIXES = (_RESULT_JSON_PREFIX, _OMNI_WRAPPED_RESULT_PREFIX)
+_OMNI_SESSION_PREFIX = "result_"
+_OMNI_LEGACY_SESSION_PREFIX = "omni_result_"
+_OMNI_JSON_PREFIXES = (_OMNI_SESSION_PREFIX, _OMNI_LEGACY_SESSION_PREFIX)
 _DIFFUSION_RESULT_PREFIX = "diffusion_result_"
 DEFAULT_INPUT_DIR = os.getenv("DEFAULT_INPUT_DIR") if os.getenv("DEFAULT_INPUT_DIR") else "tests"
 DEFAULT_OUTPUT_DIR = os.getenv("DEFAULT_OUTPUT_DIR") if os.getenv("DEFAULT_OUTPUT_DIR") else "tests"
@@ -339,18 +340,16 @@ def _load_json_file(path: str) -> dict[str, Any] | list[Any] | None:
 
 
 def _parse_from_filename(filename: str) -> dict[str, Any]:
-    """Parse ``result_test_*.json`` / ``omni_result_*.json`` filenames.
+    """Parse ``result_test_*.json`` flat omni perf filenames.
 
-    Matches ``tests/dfx/perf/scripts/run_benchmark.py`` naming, including optional
-    ``_in{X}_out{Y}_`` before the timestamp (``na`` when unset).
+    Matches legacy single-run naming, including optional ``_in{X}_out{Y}_`` before
+    the timestamp (``na`` when unset). Session aggregates use ``result_<stem>_<ts>.json``
+    and are handled separately when the JSON root is a list.
     """
     name, ext = os.path.splitext(filename)
     prefix: str | None = None
-    if ext == ".json":
-        if name.startswith(_OMNI_WRAPPED_RESULT_PREFIX):
-            prefix = _OMNI_WRAPPED_RESULT_PREFIX
-        elif name.startswith(_RESULT_JSON_PREFIX):
-            prefix = _RESULT_JSON_PREFIX
+    if ext == ".json" and name.startswith(_RESULT_JSON_PREFIX):
+        prefix = _RESULT_JSON_PREFIX
     if prefix is None:
         return {}
 
@@ -414,11 +413,16 @@ def _parse_from_filename(filename: str) -> dict[str, Any]:
 
 
 def _parse_omni_session_from_filename(filename: str) -> dict[str, Any]:
-    """Parse session timestamp from ``omni_result_<config_stem>_<YYYYMMDD-HHMMSS>.json``."""
+    """Parse session timestamp from ``result_<config_stem>_<YYYYMMDD-HHMMSS>.json``."""
     name, ext = os.path.splitext(filename)
-    if ext != ".json" or not name.startswith(_OMNI_WRAPPED_RESULT_PREFIX):
+    if ext != ".json":
         return {}
-    core = name[len(_OMNI_WRAPPED_RESULT_PREFIX) :]
+    if name.startswith(_OMNI_LEGACY_SESSION_PREFIX):
+        core = name[len(_OMNI_LEGACY_SESSION_PREFIX) :]
+    elif name.startswith(_OMNI_SESSION_PREFIX):
+        core = name[len(_OMNI_SESSION_PREFIX) :]
+    else:
+        return {}
     parts = core.split("_")
     if len(parts) < 2:
         return {}
@@ -480,7 +484,9 @@ def _iter_omni_json_records(input_dir: str) -> Iterable[dict[str, Any]]:
             continue
 
         basename = os.path.basename(full_path)
-        if basename.startswith(_OMNI_WRAPPED_RESULT_PREFIX) and isinstance(data, list):
+        if isinstance(data, list) and (
+            basename.startswith(_OMNI_SESSION_PREFIX) or basename.startswith(_OMNI_LEGACY_SESSION_PREFIX)
+        ):
             filename_meta = _parse_omni_session_from_filename(basename)
             for item in data:
                 if not isinstance(item, dict):
@@ -544,7 +550,7 @@ def _iter_diffusion_records(input_dir: str) -> Iterable[dict[str, Any]]:
     """Iterate over diffusion_result_*.json files and yield normalized records.
 
     Unlike legacy flat ``result_test_*.json`` files (one record per file), wrapped
-    ``omni_result_*.json`` session files contain a list of all scenario records.
+    ``result_*.json`` / legacy ``omni_result_*.json`` session files contain a list of all scenario records.
     produces a single JSON file containing a list of all test case records.
     Test params (feature toggles) are NOT embedded in the filename.
     """
