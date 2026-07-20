@@ -74,7 +74,12 @@ class TestMoriConnectorBehavior:
         ok, size, metadata = mori_sender_connector.put("s0", "s1", "req-1", {"hello": "world"})
         assert ok is True
         assert size > 0
-        assert metadata is None
+        assert metadata == {
+            "source_host": mori_sender_connector.host,
+            "source_port": mori_sender_connector.zmq_port,
+            "data_size": size,
+            "is_fast_path": False,
+        }
         assert mori_sender_connector._metrics["puts"] == 1
 
     def test_sender_put_rejects_empty_bytes(self, mori_sender_connector):
@@ -154,6 +159,9 @@ def mori_mocks(monkeypatch):
             return FakeMemoryDesc()
 
         def register_remote_engine(self, _desc):
+            return None
+
+        def deregister_memory(self, _desc):
             return None
 
         def deregister_remote_engine(self, _desc):
