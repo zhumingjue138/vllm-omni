@@ -5,12 +5,11 @@ from typing import Any
 
 import pytest
 
+# Shared benchmark runners for perf (session set) and stability (session=None loop).
+from tests.dfx.perf.helpers import run_diffusion_benchmark, run_omni_benchmark  # noqa: F401
 from tests.helpers.mark import hardware_marks
 from tests.helpers.stage_config import modify_stage_config
 from vllm_omni.platforms import current_omni_platform
-
-# Backward-compatible alias for stability and other omni DFX suites.
-from tests.dfx.perf.helpers import run_omni_benchmark as run_benchmark  # noqa: F401
 
 
 def _named_pytest_marks(names: list[str]) -> list[pytest.MarkDecorator]:
@@ -113,32 +112,6 @@ def create_unique_server_pytest_params(
         )
         for row in create_unique_server_params(configs, stage_configs_dir)
     ]
-
-
-def create_benchmark_pytest_params(
-    benchmark_configs: list[dict[str, Any]],
-    server_to_benchmark_mapping: dict[str, dict],
-) -> list[Any]:
-    """Like :func:`create_benchmark_indices`, but wrap each index in ``pytest.param`` with JSON marks."""
-    marks_by_name = _marks_by_test_name(benchmark_configs)
-    params: list[Any] = []
-    seen: set[str] = set()
-    for config in benchmark_configs:
-        test_name = config["test_name"]
-        if test_name in seen:
-            continue
-        seen.add(test_name)
-        params_list = get_benchmark_params_for_server(test_name, server_to_benchmark_mapping)
-        id_suffixes = _unique_benchmark_param_id_suffixes(params_list)
-        for idx, id_suffix in enumerate(id_suffixes):
-            params.append(
-                pytest.param(
-                    (test_name, idx),
-                    marks=marks_by_name.get(test_name, []),
-                    id=f"{test_name}-{id_suffix}",
-                )
-            )
-    return params
 
 
 def create_paired_benchmark_pytest_params(
@@ -506,38 +479,6 @@ def extract_configs_resource_label(configs: list[dict[str, Any]]) -> str:
     """Return runtime hardware label for perf result filenames."""
     del configs
     return get_runtime_resource_label()
-
-
-def resolve_baseline_value(
-    baseline_raw: Any,
-    *,
-    sweep_index: int | None,
-    max_concurrency: Any = None,
-    request_rate: Any = None,
-) -> Any:
-    """Pick the baseline threshold for this sweep step."""
-    if baseline_raw is None:
-        return 100000
-    if isinstance(baseline_raw, dict):
-        if max_concurrency is not None:
-            for key in (max_concurrency, str(max_concurrency)):
-                if key in baseline_raw:
-                    return baseline_raw[key]
-        if request_rate is not None:
-            for key in (request_rate, str(request_rate)):
-                if key in baseline_raw:
-                    return baseline_raw[key]
-        raise KeyError(
-            f"baseline dict has no key for max_concurrency={max_concurrency!r} "
-            f"or request_rate={request_rate!r}; keys={list(baseline_raw.keys())!r}"
-        )
-    if isinstance(baseline_raw, (list, tuple)):
-        if sweep_index is None:
-            raise ValueError("list baseline requires sweep_index")
-        if not (0 <= sweep_index < len(baseline_raw)):
-            raise IndexError(f"baseline list len={len(baseline_raw)} has no index {sweep_index}")
-        return baseline_raw[sweep_index]
-    return baseline_raw
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -9,14 +9,13 @@ import re
 import shlex
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from tests.dfx.conftest import run_benchmark
+from tests.dfx.conftest import run_diffusion_benchmark, run_omni_benchmark
 
 STABILITY_DIR = Path(__file__).resolve().parent
 RESOURCE_MONITOR_SCRIPT = STABILITY_DIR / "scripts" / "resource_monitor.sh"
@@ -165,59 +164,6 @@ def _build_base_args(params: dict[str, Any], host: str, port: int) -> list[str]:
     return args
 
 
-def _build_diffusion_cmd(
-    host: str,
-    port: int,
-    model: str,
-    params: dict[str, Any],
-    num_prompts: int,
-    request_rate: float | None,
-    max_concurrency: int | None,
-    output_path: Path,
-    diffusion_benchmark_script: Path,
-) -> list[str]:
-    skip_keys = {
-        "request_rate",
-        "max_concurrency",
-        "num_prompts",
-        "baseline",
-        "duration_sec",
-        "num_prompts_per_batch",
-    }
-    cmd: list[str] = [
-        sys.executable,
-        "-u",
-        str(diffusion_benchmark_script),
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--model",
-        model,
-        "--output-file",
-        str(output_path),
-    ]
-    for key, value in params.items():
-        if key in skip_keys or value is None:
-            continue
-        flag = f"--{str(key).replace('_', '-')}"
-        if isinstance(value, bool) and value:
-            cmd.append(flag)
-        elif isinstance(value, bool):
-            continue
-        elif isinstance(value, (dict, list)):
-            cmd.extend([flag, json.dumps(value, ensure_ascii=False, separators=(",", ":"))])
-        else:
-            cmd.extend([flag, str(value)])
-
-    cmd.extend(["--num-prompts", str(num_prompts)])
-    if request_rate is not None:
-        cmd.extend(["--request-rate", str(request_rate)])
-    else:
-        cmd.extend(["--max-concurrency", str(max_concurrency), "--request-rate", "inf"])
-    return cmd
-
-
 def _sample_int_from_range_spec(value: Any, rng: random.Random) -> Any:
     """Resolve one value that may be scalar or range spec into an int."""
     if isinstance(value, int):
@@ -333,7 +279,7 @@ def _run_one_vllm_bench_batch(
     old_benchmark_dir = os.environ.get("BENCHMARK_DIR")
     try:
         os.environ["BENCHMARK_DIR"] = result_dir
-        result = run_benchmark(
+        result = run_omni_benchmark(
             args=args,
             test_name="stability",
             flow=flow,
@@ -368,47 +314,35 @@ def _run_one_diffusion_batch(
     _result_dir: str,
     _batch_index: int,
 ) -> dict[str, Any]:
-    diffusion_benchmark_script = Path(REPO_ROOT / "benchmarks" / "diffusion" / "diffusion_benchmark_serving.py")
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="stability_diffusion_", delete=False) as tmp:
-        out_path = Path(tmp.name)
+    del _result_dir, _batch_index
+    run_params = {
+        k: v
+        for k, v in params.items()
+        if k
+        not in (
+            "duration_sec",
+            "num_prompts_per_batch",
+            "request_rate",
+            "max_concurrency",
+            "baseline",
+        )
+    }
+    run_params["num-prompts"] = num_prompts
+    if request_rate is not None:
+        run_params["request-rate"] = request_rate
+    else:
+        run_params["max-concurrency"] = max_concurrency
+        run_params["request-rate"] = "inf"
+
     try:
-        cmd = _build_diffusion_cmd(
+        metrics = run_diffusion_benchmark(
             host,
             port,
             model,
-            params,
-            num_prompts,
-            request_rate,
-            max_concurrency,
-            out_path,
-            diffusion_benchmark_script,
+            run_params,
+            test_name="stability",
+            session=None,
         )
-        proc = subprocess.run(
-            cmd,
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-        )
-        if proc.stdout:
-            print(proc.stdout, end="" if proc.stdout.endswith("\n") else "\n")
-        if proc.stderr:
-            print(proc.stderr, end="" if proc.stderr.endswith("\n") else "\n")
-        if proc.returncode != 0:
-            return {
-                "completed": 0,
-                "failed": 1,
-                "duration": 0.0,
-                "errors": [f"diffusion_benchmark_serving.py exited {proc.returncode}"],
-            }
-        if not out_path.is_file():
-            return {
-                "completed": 0,
-                "failed": 1,
-                "duration": 0.0,
-                "errors": [f"Missing benchmark output: {out_path}"],
-            }
-        with open(out_path, encoding="utf-8") as file:
-            metrics = json.load(file)
         return _normalize_bench_metrics(metrics)
     except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
         return {
@@ -417,8 +351,6 @@ def _run_one_diffusion_batch(
             "duration": 0.0,
             "errors": [f"Diffusion batch failed: {type(exc).__name__}: {exc}"],
         }
-    finally:
-        out_path.unlink(missing_ok=True)
 
 
 def merge_batch_results(batch_results: list[dict[str, Any]], total_duration_sec: float) -> dict[str, Any]:

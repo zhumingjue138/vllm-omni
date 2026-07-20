@@ -1,24 +1,10 @@
-"""Shared reliability fault-injection helpers.
-
-This module keeps fault injection callable from tests directly:
-- GPU OOM (CUDA sidecar memory hog)
-- process kill by pattern and signal
-- post-ready hooks via ``fault_injector`` / ``omni_server_after_fault`` fixtures
-
-Worker PID classification (``worker_pids`` in snapshots) is still used for logging /
-markers; post-fault **process** cleanup assertions use the full captured
-``tree_pids`` (serve root + descendants at fault time) — see
-:func:`assert_no_server_tree_process_residual_and_gpu_release`.
-"""
+"""Fault injection helpers for reliability tests."""
 
 from __future__ import annotations
 
 import concurrent.futures
-import http.client
-import json
 import logging
 import os
-import re
 import select
 import shlex
 import signal
@@ -27,35 +13,14 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import psutil
 import pytest
 
+from tests.dfx.reliability.helpers.config import DEFAULT_RUNTIME_WORKER_MARKERS
+
 logger = logging.getLogger(__name__)
-
-PROCESS_KILL_ERROR_KEYWORDS: tuple[str, ...] = (
-    "timeout",
-    "did not complete within",
-    "connection",
-    "engine",
-    "orchestrator",
-    "dead",
-    "internal",
-    "500",
-    "503",
-)
-
-# Substrings matched against ``psutil.Process.name`` + argv text for classifying GPU
-# workers under the test server tree. Extend per-suite via
-# ``server.reliability_worker_markers_extra`` or replace via
-# ``server.reliability_worker_markers`` (see ``_resolve_runtime_worker_markers``).
-DEFAULT_RUNTIME_WORKER_MARKERS: tuple[str, ...] = (
-    "multiprocessing.spawn",
-    # Covers ``VLLM::Worker``, ``VLLM::StageEngineCoreProc_*`` (Omni stage engines), etc.
-    "VLLM::",
-)
 
 
 @dataclass
@@ -66,155 +31,6 @@ class OomHandle:
     device: int
     target_mem_ratio: float
     start_ts: float
-
-
-def post_chat_completions_raw(
-    host: str,
-    port: int,
-    body: bytes | str,
-    *,
-    content_type: str = "application/json",
-    timeout_sec: int = 120,
-) -> tuple[int, bytes]:
-    """POST /v1/chat/completions with raw bytes; returns (status, response_body)."""
-    conn = http.client.HTTPConnection(host, port, timeout=timeout_sec)
-    try:
-        headers = {"Content-Type": content_type}
-        payload = body.encode("utf-8") if isinstance(body, str) else body
-        conn.request("POST", "/v1/chat/completions", body=payload, headers=headers)
-        resp = conn.getresponse()
-        data = resp.read()
-        return resp.status, data
-    finally:
-        conn.close()
-
-
-def get_health_raw(host: str, port: int, *, timeout_sec: int = 20) -> tuple[int, bytes]:
-    """GET /health with stdlib HTTP client; returns (status, body)."""
-    conn = http.client.HTTPConnection(host, port, timeout=timeout_sec)
-    try:
-        conn.request("GET", "/health")
-        resp = conn.getresponse()
-        return resp.status, resp.read()
-    finally:
-        conn.close()
-
-
-def supports_video_generation(model_name: str) -> bool:
-    lower = model_name.lower()
-    return any(key in lower for key in ("wan", "video", "i2v", "t2v"))
-
-
-def _parse_stage_devices(stage_config_path: str) -> str:
-    text = Path(stage_config_path).read_text(encoding="utf-8")
-    raw_devices: list[str] = re.findall(r"^\s*devices:\s*\"?([0-9,\s]+)\"?\s*$", text, flags=re.MULTILINE)
-    devices: set[int] = set()
-    for item in raw_devices:
-        for token in item.split(","):
-            token = token.strip()
-            if token:
-                devices.add(int(token))
-    if not devices:
-        raise ValueError(f"No runtime.devices found in stage config: {stage_config_path}")
-    return ",".join(str(x) for x in sorted(devices))
-
-
-def resolve_oom_device_spec(config: dict[str, Any], stage_config_path: str | None) -> str:
-    explicit = config.get("device")
-    if explicit is not None:
-        return str(explicit)
-    if not stage_config_path:
-        return "0"
-    return _parse_stage_devices(stage_config_path)
-
-
-def assert_fault_exception(exc: Exception, error_keywords: tuple[str, ...]) -> None:
-    text = str(exc).lower()
-    assert any(key in text for key in error_keywords), f"unexpected error under fault injection: {exc}"
-
-
-def assert_post_fault_health_terminal(host: str, port: int, *, scenario: str) -> None:
-    deadline = time.monotonic() + 20.0
-    last_observation = ""
-    while time.monotonic() < deadline:
-        try:
-            status, body = get_health_raw(host, port, timeout_sec=5)
-            last_observation = f"http={status}, body={body[:200]!r}"
-            if status == 503:
-                return
-        except Exception as exc:  # noqa: BLE001
-            last_observation = f"exception={exc!r}"
-            return
-        time.sleep(0.5)
-    pytest.fail(f"[{scenario} health] no terminal post-fault health observed: {last_observation}")
-
-
-def post_json_raw_http_client(
-    host: str,
-    port: int,
-    path: str,
-    payload: dict[str, Any],
-    *,
-    timeout_sec: int = 30,
-) -> tuple[int, bytes]:
-    """POST JSON to one endpoint with stdlib HTTP client; returns (status, body)."""
-    conn = http.client.HTTPConnection(host, port, timeout=timeout_sec)
-    try:
-        body = json.dumps(payload).encode("utf-8")
-        conn.request("POST", path, body=body, headers={"Content-Type": "application/json"})
-        resp = conn.getresponse()
-        return resp.status, resp.read()
-    finally:
-        conn.close()
-
-
-def post_json_raw(
-    host: str,
-    port: int,
-    path: str,
-    payload: dict[str, Any],
-    *,
-    timeout_sec: int = 30,
-) -> tuple[int, bytes]:
-    """POST JSON to one endpoint; returns (status, body)."""
-    return (
-        post_chat_completions_raw(
-            host,
-            port,
-            json.dumps(payload),
-            content_type="application/json",
-            timeout_sec=timeout_sec,
-        )
-        if path == "/v1/chat/completions"
-        else post_json_raw_http_client(
-            host,
-            port,
-            path,
-            payload,
-            timeout_sec=timeout_sec,
-        )
-    )
-
-
-def extract_openai_error_contract_from_bytes(response_body: bytes) -> dict[str, Any] | None:
-    """Best-effort parse OpenAI-style error object from raw response bytes."""
-    try:
-        payload = json.loads(response_body.decode("utf-8", errors="replace"))
-    except Exception:  # noqa: BLE001
-        return None
-    return extract_openai_error_contract_from_payload(payload)
-
-
-def extract_openai_error_contract_from_payload(payload: Any) -> dict[str, Any] | None:
-    """Best-effort parse OpenAI-style error object from decoded JSON payload."""
-    if not isinstance(payload, dict):
-        return None
-    error_obj = payload.get("error")
-    if not isinstance(error_obj, dict):
-        return None
-    if not isinstance(error_obj.get("message"), str):
-        return None
-    return error_obj
 
 
 def _build_sidecar_cmd(device: int, target_mem_ratio: float, hold_seconds: int, strict: bool) -> list[str]:
@@ -716,132 +532,6 @@ def run_fault_injection_with_rate_load(
         "failure_observed": failure_observed,
         "inflight_observed": True,
     }
-
-
-def list_alive_pids(pids: Sequence[int]) -> list[int]:
-    """Return PIDs from ``pids`` that still exist in the kernel and are **not** zombies.
-
-    After SIGTERM/SIGKILL the serve child may exit before the test harness calls
-    ``Popen.wait()``; until reaped, ``psutil.pid_exists`` stays true for the defunct
-    slot. Those PIDs must not count as "residual server processes" for leak checks.
-    """
-    out: list[int] = []
-    for pid in pids:
-        pid_i = int(pid)
-        if not psutil.pid_exists(pid_i):
-            continue
-        try:
-            if psutil.Process(pid_i).status() == psutil.STATUS_ZOMBIE:
-                continue
-        except psutil.Error:
-            continue
-        out.append(pid_i)
-    return out
-
-
-def query_gpu_compute_pid_used_memory_mb() -> dict[int, int] | None:
-    """Query NVIDIA compute-process memory map (pid -> used MB).
-
-    Returns ``None`` when ``nvidia-smi`` is unavailable/unreadable on current host.
-    """
-    out = subprocess.run(
-        ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if out.returncode != 0:
-        logger.warning("[reliability][gpu] nvidia-smi query failed: %s", out.stderr.strip())
-        return None
-
-    pid_to_mem_mb: dict[int, int] = {}
-    for line in out.stdout.splitlines():
-        row = line.strip()
-        if not row:
-            continue
-        pieces = [part.strip() for part in row.split(",", maxsplit=1)]
-        if len(pieces) != 2:
-            continue
-        pid_raw, mem_raw = pieces
-        if not pid_raw.isdigit():
-            continue
-        mem_digits = "".join(ch for ch in mem_raw if ch.isdigit())
-        if not mem_digits:
-            continue
-        pid_to_mem_mb[int(pid_raw)] = int(mem_digits)
-    return pid_to_mem_mb
-
-
-def worker_residual_timeout_after_kill_signal(signal_name: str) -> float:
-    """Wall-clock budget for fault-snapshot PIDs / GPU to clear after ``signal_name``."""
-    if signal_name == "SIGKILL":
-        return 30.0
-    if signal_name == "SIGINT":
-        return 120.0
-    if signal_name == "SIGTERM":
-        return 90.0
-    return 30.0
-
-
-def assert_no_server_tree_process_residual_and_gpu_release(
-    server: Any,
-    *,
-    scenario: str,
-    timeout_sec: float = 30.0,
-    poll_interval_sec: float = 0.5,
-) -> None:
-    """Assert no live PIDs remain from the fault-time server tree and no GPU use by those PIDs.
-
-    Uses ``reliability_fault_snapshot["tree_pids"]`` (root + all descendants captured at
-    injection time), not the marker-filtered ``worker_pids`` subset — so helpers like
-    ``multiprocessing.resource_tracker`` are included in the residual check.
-
-    **Zombie** PIDs (exited children not yet reaped by the test ``Popen``) are excluded
-    from the "alive" list; ``psutil.pid_exists`` alone would false-positive on them.
-
-    Note: if a child is reparented to PID 1 while staying alive, its PID is unchanged
-    and remains detected; if it **exits and a new unrelated process reuses the same
-    numeric PID**, this check may false-positive (rare on short windows).
-    """
-    snapshot = getattr(server, "reliability_fault_snapshot", None)
-    if not isinstance(snapshot, dict):
-        pytest.fail(f"[{scenario}] missing reliability fault snapshot on server")
-    tree_pids = [int(pid) for pid in snapshot.get("tree_pids", [])]
-    if not tree_pids:
-        pytest.skip(f"[{scenario}] no server process tree PIDs captured for this run")
-
-    tree_pid_set = set(tree_pids)
-    deadline = time.monotonic() + timeout_sec
-    last_alive: list[int] = []
-    last_gpu_leaks: dict[int, int] = {}
-    while time.monotonic() < deadline:
-        last_alive = list_alive_pids(tree_pids)
-        gpu_map = query_gpu_compute_pid_used_memory_mb()
-        if gpu_map is None:
-            pytest.skip(f"[{scenario}] nvidia-smi unavailable; skip GPU release assertion")
-        last_gpu_leaks = {pid: mem_mb for pid, mem_mb in gpu_map.items() if pid in tree_pid_set and mem_mb > 0}
-        if not last_alive and not last_gpu_leaks:
-            return
-        time.sleep(poll_interval_sec)
-
-    assert not last_alive, f"[{scenario}] residual server-tree processes remain alive: {last_alive}"
-    assert not last_gpu_leaks, f"[{scenario}] server-tree PID GPU memory not released: {last_gpu_leaks}"
-
-
-def assert_no_worker_residual_and_gpu_release(
-    server: Any,
-    *,
-    scenario: str,
-    timeout_sec: float = 30.0,
-    poll_interval_sec: float = 0.5,
-) -> None:
-    """Deprecated: use :func:`assert_no_server_tree_process_residual_and_gpu_release`."""
-    assert_no_server_tree_process_residual_and_gpu_release(
-        server,
-        scenario=scenario,
-        timeout_sec=timeout_sec,
-        poll_interval_sec=poll_interval_sec,
-    )
 
 
 def _capture_server_fault_snapshot(

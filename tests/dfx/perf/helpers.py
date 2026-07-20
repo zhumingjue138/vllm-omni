@@ -27,6 +27,7 @@ OMNI_RAW_RESULT_TEMPLATE_PATH = PERF_SCRIPTS_DIR / "result_omni_template.json"
 # Backward-compatible alias: raw vLLM bench metrics template used when subprocess omits JSON.
 OMNI_RESULT_TEMPLATE_PATH = OMNI_RAW_RESULT_TEMPLATE_PATH
 DIFFUSION_RESULT_TEMPLATE_PATH = PERF_SCRIPTS_DIR / "diffusion_result_template.json"
+DEFAULT_DIFFUSION_BENCHMARK_SCRIPT = str(REPO_ROOT / "benchmarks" / "diffusion" / "diffusion_benchmark_serving.py")
 DEFAULT_OMNI_SERVER_TIMEOUT_ARGS = ["--stage-init-timeout", "600", "--init-timeout", "900"]
 
 _BRANCHPOINT_COMMIT_SHA: str | None = None
@@ -706,26 +707,50 @@ def run_diffusion_benchmark(
     params: dict[str, Any],
     test_name: str,
     *,
-    session: DiffusionBenchmarkSession,
-    endpoint: str = "/v1/chat/completions",
+    session: DiffusionBenchmarkSession | None = None,
+    endpoint: str | None = None,
     server_cfg: dict[str, Any] | None = None,
     source_file: str = "",
+    template_path: Path = DIFFUSION_RESULT_TEMPLATE_PATH,
 ) -> dict[str, Any]:
-    """Run diffusion_benchmark_serving.py and append a session-level result record."""
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    endpoint = normalize_endpoint(endpoint)
+    """Run one ``diffusion_benchmark_serving.py`` iteration.
 
-    log_dir = session.result_dir / "logs"
-    endpoint_label = endpoint_filename_token(endpoint)
-    log_file = log_dir / f"{test_name}_{endpoint_label}_{timestamp}.log"
+    With *session*, append a perf report record to the aggregated JSON file.
+    With ``session=None`` (stability loop), return flat metrics only.
+    """
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    server_cfg = server_cfg or {}
+    resolved_endpoint = normalize_endpoint(endpoint or resolve_benchmark_endpoint(server_cfg, params))
+
+    if session is not None:
+        log_dir = session.result_dir / "logs"
+        endpoint_label = endpoint_filename_token(resolved_endpoint)
+        log_file: Path | None = log_dir / f"{test_name}_{endpoint_label}_{timestamp}.log"
+        benchmark_script = session.benchmark_script
+        result_template_path = session.template_path
+    else:
+        log_file = None
+        benchmark_script = DEFAULT_DIFFUSION_BENCHMARK_SCRIPT
+        result_template_path = template_path
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="diffusion_bench_tmp_", delete=False) as tmp:
         tmp_result_file = Path(tmp.name)
 
-    exclude_keys = {"baseline", "dataset", "task", "name", "skip-performance-assertion"}
+    exclude_keys = {
+        "baseline",
+        "dataset",
+        "task",
+        "name",
+        "skip-performance-assertion",
+        "request_rate",
+        "max_concurrency",
+        "num_prompts",
+        "duration_sec",
+        "num_prompts_per_batch",
+    }
     cmd = [
         sys.executable,
-        session.benchmark_script,
+        benchmark_script,
         "--host",
         host,
         "--port",
@@ -733,7 +758,7 @@ def run_diffusion_benchmark(
         "--model",
         model,
         "--endpoint",
-        endpoint,
+        resolved_endpoint,
         "--dataset",
         params.get("dataset", "random"),
         "--task",
@@ -742,16 +767,15 @@ def run_diffusion_benchmark(
         str(tmp_result_file),
     ]
 
-    server_cfg = server_cfg or {}
     serve_args_dict = server_cfg.get("serve_args_dict")
     profiler_enabled = isinstance(serve_args_dict, dict) and bool(serve_args_dict.get(_DIFFUSION_PIPELINE_PROFILER_ARG))
-    if endpoint in _STAGE_METRICS_ENDPOINTS and profiler_enabled:
+    if resolved_endpoint in _STAGE_METRICS_ENDPOINTS and profiler_enabled:
         cmd.append("--return-stage-metrics")
 
     for key, value in params.items():
         if key in exclude_keys or value is None:
             continue
-        flag = f"--{key}"
+        flag = f"--{str(key).replace('_', '-')}"
         if isinstance(value, bool):
             if value:
                 cmd.append(flag)
@@ -760,26 +784,50 @@ def run_diffusion_benchmark(
         else:
             cmd.extend([flag, str(value)])
 
-    print(f"\nRunning benchmark (endpoint={endpoint}): {' '.join(cmd)}")
-    print(f"  Log file: {log_file}")
+    print(f"\nRunning benchmark (endpoint={resolved_endpoint}): {' '.join(cmd)}")
+    if log_file is not None:
+        print(f"  Log file: {log_file}")
 
-    return_code = run_subprocess_with_log(cmd, cwd=REPO_ROOT, log_file=log_file, unbuffered=True)
+    return_code = run_subprocess_with_log(
+        cmd,
+        cwd=REPO_ROOT,
+        log_file=log_file,
+        unbuffered=True,
+    )
     if return_code != 0:
         tmp_result_file.unlink(missing_ok=True)
         print(f"ERROR:Benchmark script exited with code {return_code}")
+        if session is None:
+            return {
+                "completed": 0,
+                "failed": 1,
+                "duration": 0.0,
+                "errors": [f"diffusion_benchmark_serving.py exited {return_code}"],
+            }
 
     try:
+        if not tmp_result_file.is_file() and session is None:
+            return {
+                "completed": 0,
+                "failed": 1,
+                "duration": 0.0,
+                "errors": [f"Missing benchmark output: {tmp_result_file}"],
+            }
         metrics = read_metrics_or_template(
             tmp_result_file,
-            session.template_path,
+            result_template_path,
             extract_template_metrics=_extract_diffusion_template_metrics,
         )
     finally:
         tmp_result_file.unlink(missing_ok=True)
 
+    if session is None:
+        return metrics
+
+    assert log_file is not None
     record = build_diffusion_report_record(
         test_name=test_name,
-        endpoint=endpoint,
+        endpoint=resolved_endpoint,
         timestamp=timestamp,
         model=model,
         params=params,
