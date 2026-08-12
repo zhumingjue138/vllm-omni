@@ -397,6 +397,7 @@ def test_reliability_fault_process_kill_serve_root_no_load_fast_fail_and_cleanup
     signal_name: str,
 ) -> None:
     scenario = f"kill_serve_root_no_load_{signal_name.lower()}"
+    omni_server_function.reliability_last_scenario = scenario
     injector = make_server_root_kill_fault_injector(signal_name=signal_name, post_kill_wait_seconds=2.0)
     injector(omni_server_function)
     host = omni_server_function.host
@@ -422,6 +423,7 @@ def test_reliability_fault_process_kill_serve_root_with_load_fast_fail_and_clean
     signal_name: str,
 ) -> None:
     scenario = f"kill_serve_root_with_load_{signal_name.lower()}"
+    omni_server_function.reliability_last_scenario = scenario
     injector = make_server_root_kill_fault_injector(signal_name=signal_name, post_kill_wait_seconds=2.0)
     load_result = run_fault_injection_with_rate_load(
         submit_request=lambda: _submit_speech_request(openai_client_function, omni_server_function),

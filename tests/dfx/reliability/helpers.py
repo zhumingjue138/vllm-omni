@@ -468,6 +468,98 @@ def _safe_proc_info(pid: int) -> tuple[str, str]:
         return "<unknown>", "<unavailable>"
 
 
+def _truncate_cmdline(cmdline: str, *, max_len: int = 240) -> str:
+    if len(cmdline) <= max_len:
+        return cmdline
+    return cmdline[: max_len - 3] + "..."
+
+
+def format_proc_diagnostic(pid: int) -> str:
+    """Single-line process snapshot for CI reliability debugging."""
+    try:
+        proc = psutil.Process(int(pid))
+        name = proc.name()
+        cmdline = _truncate_cmdline(" ".join(proc.cmdline()) or "<empty-cmdline>")
+        status = proc.status()
+        ppid = proc.ppid()
+        age_sec = max(0.0, time.time() - proc.create_time())
+        cpu_pct = proc.cpu_percent(interval=0.0)
+        mem_rss_mb = proc.memory_info().rss / (1024 * 1024)
+        return (
+            f"pid={pid} ppid={ppid} status={status} age_sec={age_sec:.1f} "
+            f"cpu_pct={cpu_pct:.1f} rss_mb={mem_rss_mb:.1f} "
+            f"name={name!r} cmdline={cmdline!r}"
+        )
+    except psutil.NoSuchProcess:
+        return f"pid={pid} <gone>"
+    except Exception as exc:  # noqa: BLE001
+        return f"pid={pid} <error {exc!r}>"
+
+
+def _server_ready_age_sec(server: Any) -> float | None:
+    ready_ts = getattr(server, "server_ready_monotonic", None)
+    if ready_ts is None:
+        return None
+    return max(0.0, time.monotonic() - float(ready_ts))
+
+
+def _log_reliability_diag(scenario: str, label: str, message: str) -> None:
+    print(f"[reliability][{scenario}][{label}] {message}", flush=True)
+
+
+def log_fault_snapshot_pids_status(
+    server: Any,
+    *,
+    scenario: str,
+    label: str,
+) -> None:
+    """Log every PID in ``reliability_fault_snapshot['tree_pids']`` with proc/GPU detail."""
+    snapshot = getattr(server, "reliability_fault_snapshot", None)
+    if not isinstance(snapshot, dict):
+        _log_reliability_diag(scenario, label, "no reliability_fault_snapshot on server")
+        return
+
+    tree_pids = [int(pid) for pid in snapshot.get("tree_pids", [])]
+    worker_pids = [int(pid) for pid in snapshot.get("worker_pids", [])]
+    ready_age = _server_ready_age_sec(server)
+    ready_age_text = f"{ready_age:.2f}s" if ready_age is not None else "unknown"
+    _log_reliability_diag(
+        scenario,
+        label,
+        f"server_ready_age={ready_age_text} tree_pids={tree_pids} worker_pids={worker_pids}",
+    )
+
+    gpu_map = query_gpu_compute_pid_used_memory_mb()
+    for pid in tree_pids:
+        alive = pid in list_alive_pids([pid])
+        gpu_mb = gpu_map.get(pid) if gpu_map is not None else None
+        gpu_text = f" gpu_used_mb={gpu_mb}" if gpu_mb is not None else ""
+        _log_reliability_diag(
+            scenario,
+            label,
+            f"{'alive' if alive else 'dead'} {format_proc_diagnostic(pid)}{gpu_text}",
+        )
+
+
+def log_reliability_teardown_diagnostics(
+    server: Any,
+    *,
+    exc_type: type[BaseException] | None,
+    label: str = "teardown",
+) -> None:
+    """Fixture teardown hook: log residual fault-snapshot PIDs before process-tree cleanup."""
+    scenario = getattr(server, "reliability_last_scenario", None) or "unknown_scenario"
+    exc_name = exc_type.__name__ if exc_type is not None else "None"
+    root_proc = getattr(server, "proc", None)
+    root_pid = getattr(root_proc, "pid", None)
+    _log_reliability_diag(
+        scenario,
+        label,
+        f"pytest_exc_type={exc_name} omni_server_root_pid={root_pid}",
+    )
+    log_fault_snapshot_pids_status(server, scenario=scenario, label=label)
+
+
 def _normalize_worker_marker_substrings(seq: Sequence[Any], *, context: str) -> tuple[str, ...]:
     """Return deduped non-empty marker substrings; raises if any entry is blank."""
     out: list[str] = []
@@ -568,10 +660,15 @@ def _log_server_process_tree(server: Any) -> None:
     if not pids:
         logger.warning("[reliability][process-kill] current server has no visible process tree")
         return
+    ready_age = _server_ready_age_sec(server)
+    ready_age_text = f"{ready_age:.2f}s" if ready_age is not None else "unknown"
+    print(
+        f"[reliability][process-kill] current_server_tree server_ready_age={ready_age_text} tree_pids={pids}",
+        flush=True,
+    )
     for pid in pids:
-        name, cmdline = _safe_proc_info(pid)
         print(
-            f"[reliability][process-kill] current_server_proc pid={pid} name={name} cmdline={cmdline}",
+            f"[reliability][process-kill] current_server_proc {format_proc_diagnostic(pid)}",
             flush=True,
         )
 
@@ -747,20 +844,70 @@ def assert_no_server_tree_process_residual_and_gpu_release(
     if not tree_pids:
         pytest.skip(f"[{scenario}] no server process tree PIDs captured for this run")
 
+    setattr(server, "reliability_last_scenario", scenario)
     tree_pid_set = set(tree_pids)
-    deadline = time.monotonic() + timeout_sec
+    wait_t0 = time.monotonic()
+    deadline = wait_t0 + timeout_sec
     last_alive: list[int] = []
     last_gpu_leaks: dict[int, int] = {}
+    prev_alive: set[int] = set()
+    next_progress_log_at = wait_t0
+    progress_log_interval_sec = 5.0
+
+    log_fault_snapshot_pids_status(server, scenario=scenario, label="residual_wait_start")
+    _log_reliability_diag(scenario, "residual_wait", f"timeout_sec={timeout_sec} tree_pids={tree_pids}")
+
     while time.monotonic() < deadline:
+        elapsed = time.monotonic() - wait_t0
         last_alive = list_alive_pids(tree_pids)
+        alive_set = set(last_alive)
+        if alive_set != prev_alive:
+            exited = sorted(prev_alive - alive_set)
+            appeared = sorted(alive_set - prev_alive)
+            if prev_alive:
+                _log_reliability_diag(
+                    scenario,
+                    "residual_wait",
+                    f"elapsed={elapsed:.1f}s alive={sorted(alive_set)} exited={exited} appeared={appeared}",
+                )
+            for pid in sorted(alive_set):
+                _log_reliability_diag(
+                    scenario,
+                    "residual_wait",
+                    f"elapsed={elapsed:.1f}s still_alive {format_proc_diagnostic(pid)}",
+                )
+            prev_alive = alive_set
+
         gpu_map = query_gpu_compute_pid_used_memory_mb()
         if gpu_map is None:
             pytest.skip(f"[{scenario}] nvidia-smi unavailable; skip GPU release assertion")
         last_gpu_leaks = {pid: mem_mb for pid, mem_mb in gpu_map.items() if pid in tree_pid_set and mem_mb > 0}
         if not last_alive and not last_gpu_leaks:
+            _log_reliability_diag(
+                scenario,
+                "residual_wait",
+                f"cleared elapsed={elapsed:.1f}s tree_pids={tree_pids}",
+            )
             return
+
+        now = time.monotonic()
+        if now >= next_progress_log_at:
+            _log_reliability_diag(
+                scenario,
+                "residual_wait",
+                f"progress elapsed={elapsed:.1f}s alive={last_alive} gpu_leaks={last_gpu_leaks}",
+            )
+            next_progress_log_at = now + progress_log_interval_sec
+
         time.sleep(poll_interval_sec)
 
+    elapsed = time.monotonic() - wait_t0
+    _log_reliability_diag(
+        scenario,
+        "residual_wait_timeout",
+        f"elapsed={elapsed:.1f}s alive={last_alive} gpu_leaks={last_gpu_leaks}",
+    )
+    log_fault_snapshot_pids_status(server, scenario=scenario, label="residual_wait_timeout")
     assert not last_alive, f"[{scenario}] residual server-tree processes remain alive: {last_alive}"
     assert not last_gpu_leaks, f"[{scenario}] server-tree PID GPU memory not released: {last_gpu_leaks}"
 
@@ -806,8 +953,18 @@ def _capture_server_fault_snapshot(
         "tree_pids": tree_pids,
         "worker_pids": worker_pids,
         "worker_markers": list(markers),
+        "captured_at_monotonic": time.monotonic(),
+        "server_ready_age_sec": _server_ready_age_sec(server),
     }
     setattr(server, "reliability_fault_snapshot", snapshot)
+    ready_age = snapshot["server_ready_age_sec"]
+    ready_age_text = f"{ready_age:.2f}s" if ready_age is not None else "unknown"
+    print(
+        f"[reliability][process-kill] fault_snapshot "
+        f"server_ready_age={ready_age_text} root_pids={snapshot['root_pids']} "
+        f"tree_pids={tree_pids} worker_pids={worker_pids}",
+        flush=True,
+    )
     return snapshot
 
 
@@ -839,9 +996,25 @@ def make_server_root_kill_fault_injector(
             f"[reliability][process-kill] root-kill pid={root_pid} name={name} signal={signal_name} cmdline={cmdline}",
             flush=True,
         )
+        kill_t0 = time.monotonic()
         os.kill(root_pid, sig)
         if post_kill_wait_seconds > 0:
             time.sleep(post_kill_wait_seconds)
+        alive_after_kill = list_alive_pids(snapshot["tree_pids"])
+        _log_reliability_diag(
+            "process-kill",
+            "root_kill_aftermath",
+            f"signal={signal_name} root_pid={root_pid} "
+            f"post_kill_wait_seconds={post_kill_wait_seconds} "
+            f"since_kill_sec={time.monotonic() - kill_t0:.2f} "
+            f"alive_tree_pids={alive_after_kill}",
+        )
+        for pid in alive_after_kill:
+            _log_reliability_diag(
+                "process-kill",
+                "root_kill_aftermath",
+                format_proc_diagnostic(pid),
+            )
 
     return _inject
 

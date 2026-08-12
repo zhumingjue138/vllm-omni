@@ -298,6 +298,7 @@ class OmniServer:
                 sock.settimeout(1)
                 if sock.connect_ex((self.host, self.port)) == 0:
                     startup_s = time.perf_counter() - startup_t0
+                    self.server_ready_monotonic = time.monotonic()
                     if self.log_stats:
                         print(
                             f"Server ready on {self.host}:{self.port} (OmniServer startup took {startup_s:.3f}s)",
@@ -450,8 +451,19 @@ class OmniServer:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if getattr(self, "reliability_fault_snapshot", None) is not None:
+            from tests.dfx.reliability.helpers import log_reliability_teardown_diagnostics
+
+            log_reliability_teardown_diagnostics(self, exc_type=exc_type, label="omni_server_teardown")
         if self.proc:
-            self._kill_process_tree(self.proc.pid)
+            root_pid = self.proc.pid
+            print(
+                f"[OmniServer][teardown] begin root_pid={root_pid} pytest_exc_type="
+                f"{exc_type.__name__ if exc_type is not None else 'None'}",
+                flush=True,
+            )
+            self._kill_process_tree(root_pid)
+            print(f"[OmniServer][teardown] finished root_pid={root_pid}", flush=True)
         run_pre_test_cleanup()
         run_post_test_cleanup()
         cleanup_dist_env_and_memory()
@@ -691,6 +703,7 @@ class OmniServerStageCli(OmniServer):
                 result = sock.connect_ex((self.host, self.port))
                 if result == 0:
                     startup_s = time.perf_counter() - startup_t0
+                    self.server_ready_monotonic = time.monotonic()
                     if self.log_stats:
                         print(
                             f"OmniServerStageCli ready on {self.host}:{self.port} "
